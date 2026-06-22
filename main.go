@@ -60,7 +60,7 @@ func main() {
 				http.Error(w, "not found", 404)
 				return
 			}
-			// Inject script to auto-set WebConfig address to current host
+			// Pre-fill network address so user just clicks Connect
 			autoConnect := `<script>localStorage.setItem("opendeck-webconfig-address",location.host)</script>`
 			w.Header().Set("Content-Type", "text/html")
 			w.Write([]byte(autoConnect))
@@ -85,7 +85,17 @@ func main() {
 		stop, err := midi.ListenTo(inPort, func(msg midi.Message, timestampms int32) {
 			mu.Lock()
 			defer mu.Unlock()
-			conn.WriteMessage(websocket.BinaryMessage, msg.Bytes())
+			raw := msg.Bytes()
+			// gomidi may or may not include F0/F7 framing - ensure it's present
+			if len(raw) > 0 && raw[0] != 0xF0 {
+				framed := make([]byte, len(raw)+2)
+				framed[0] = 0xF0
+				copy(framed[1:], raw)
+				framed[len(framed)-1] = 0xF7
+				conn.WriteMessage(websocket.BinaryMessage, framed)
+			} else {
+				conn.WriteMessage(websocket.BinaryMessage, raw)
+			}
 		})
 		if err != nil {
 			log.Printf("Cannot listen to MIDI in: %v", err)
@@ -99,7 +109,14 @@ func main() {
 			if err != nil {
 				break
 			}
-			send(data)
+			// UI sends full SysEx with F0...F7 framing
+			// gomidi SysEx() expects inner bytes only (adds framing itself)
+			if len(data) >= 2 && data[0] == 0xF0 && data[len(data)-1] == 0xF7 {
+				inner := data[1 : len(data)-1]
+				send(midi.SysEx(inner))
+			} else {
+				send(data)
+			}
 		}
 	})
 
