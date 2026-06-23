@@ -1,0 +1,3 @@
+cargo:rustc-link-search=/home/laenzi/projects/gh/pedalboard/opendeck-bridge/stub/target/debug/build/defmt-ad4288793a096936/out
+cargo:rustc-check-cfg=cfg(c_variadic)
+cargo:rustc-check-cfg=cfg(no_cas)
