@@ -296,6 +296,8 @@ if(!location.hash.includes("/device/")){location.hash="#/device/__webconfig__"+e
 					for i := 0; i < 10; i++ {
 						if err := connectMidi(); err == nil {
 							return
+						} else {
+							log.Printf("DFU: reconnect attempt %d failed: %v", i+1, err)
 						}
 						<-time.After(1 * time.Second)
 					}
