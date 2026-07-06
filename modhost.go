@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"log"
 	"net"
@@ -38,7 +37,7 @@ func (m *ModHost) Connect() error {
 	return nil
 }
 
-// Send sends a command to mod-host and returns the response line.
+// Send sends a command to mod-host and returns the response.
 func (m *ModHost) Send(cmd string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -51,13 +50,16 @@ func (m *ModHost) Send(cmd string) (string, error) {
 		m.conn = nil
 		return "", fmt.Errorf("mod-host send: %w", err)
 	}
-	// Read response
-	reader := bufio.NewReader(m.conn)
-	resp, err := reader.ReadString('\n')
+	// Read response (null-terminated)
+	m.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	buf := make([]byte, 256)
+	n, err := m.conn.Read(buf)
+	m.conn.SetReadDeadline(time.Time{})
 	if err != nil {
 		return "", fmt.Errorf("mod-host read: %w", err)
 	}
-	return strings.TrimSpace(resp), nil
+	resp := strings.TrimRight(string(buf[:n]), "\x00\n\r")
+	return resp, nil
 }
 
 // SendNoReply sends a command without waiting for a response.

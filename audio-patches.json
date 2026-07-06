@@ -1,6 +1,6 @@
 {
-  "capture_port": "system:capture_1",
-  "playback_port": "system:playback_1",
+  "capture_port": "system:capture_2",
+  "playback_port": "system:playback_2",
   "patches": [
     {
       "name": "Clean",
