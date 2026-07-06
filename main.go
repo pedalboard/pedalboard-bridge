@@ -122,6 +122,8 @@ func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	port := flag.String("port", "", "MIDI port name (substring match in /proc/asound/cards)")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	audioConfig := flag.String("audio", "", "audio patch config JSON file (enables mod-host integration)")
+	modHostAddr := flag.String("modhost", "localhost:5555", "mod-host TCP address")
 	flag.Parse()
 
 	if *showVersion {
@@ -131,6 +133,40 @@ func main() {
 
 	if *port == "" {
 		log.Fatal("Please specify -port flag")
+	}
+
+	// Audio engine (optional)
+	var audioEngine *AudioEngine
+	if *audioConfig != "" {
+		cfg, err := LoadAudioConfig(*audioConfig)
+		if err != nil {
+			log.Printf("Audio config: %v (audio disabled)", err)
+		} else {
+			mh := NewModHost(*modHostAddr)
+			if err := mh.Connect(); err != nil {
+				log.Printf("mod-host: %v (audio disabled, will retry)", err)
+				// Start retry goroutine
+				go func() {
+					for {
+						time.Sleep(5 * time.Second)
+						if !mh.IsConnected() {
+							if err := mh.Connect(); err == nil {
+								log.Printf("mod-host reconnected")
+								// Load initial patch
+								if audioEngine != nil {
+									audioEngine.SwitchPatch(0)
+								}
+							}
+						}
+					}
+				}()
+			}
+			audioEngine = NewAudioEngine(mh, cfg)
+			if mh.IsConnected() {
+				audioEngine.SwitchPatch(0)
+			}
+			log.Printf("Audio engine enabled: %d patches configured", len(cfg.Patches))
+		}
 	}
 
 	var midi MidiPort
@@ -210,6 +246,26 @@ func main() {
 						sysex = append(sysex, b)
 					}
 				}
+
+				// Detect MIDI channel messages for audio engine
+				if audioEngine != nil && len(data) >= 2 {
+					for i := 0; i < len(data); i++ {
+						status := data[i]
+						if status&0x80 == 0 {
+							continue // not a status byte
+						}
+						msgType := status & 0xF0
+						switch msgType {
+						case 0xC0: // Program Change → switch audio patch
+							if i+1 < len(data) {
+								program := int(data[i+1])
+								go audioEngine.SwitchPatch(program)
+								i++ // skip data byte
+							}
+						}
+					}
+				}
+
 				// Forward raw bytes to monitor
 				clientMu.Lock()
 				mon := monitorConn
