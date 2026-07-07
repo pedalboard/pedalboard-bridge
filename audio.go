@@ -9,9 +9,9 @@ import (
 
 // AudioPatch defines the audio plugin chain for a single preset.
 type AudioPatch struct {
-	Name    string        `json:"name"`
-	Plugins []PluginSlot  `json:"plugins"`
-	Params  []ParamValue  `json:"params,omitempty"`
+	Name    string       `json:"name"`
+	Plugins []PluginSlot `json:"plugins"`
+	Params  []ParamValue `json:"params,omitempty"`
 }
 
 // PluginSlot represents a plugin in the chain.
@@ -65,9 +65,9 @@ func LoadAudioConfig(path string) (*AudioConfig, error) {
 
 // AudioEngine manages audio patch switching via mod-host.
 type AudioEngine struct {
-	modhost      *ModHost
-	config       *AudioConfig
-	activePatch  int
+	modhost     *ModHost
+	config      *AudioConfig
+	activePatch int
 }
 
 // NewAudioEngine creates the audio engine with mod-host connection.
