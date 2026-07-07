@@ -496,6 +496,46 @@ if(!location.hash.includes("/device/")){location.hash="#/device/__webconfig__"+e
 		}
 	})
 
+	// POST /mode — switch between live and design mode
+	http.HandleFunc("/mode", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			// GET returns current mode
+			if audioEngine != nil && audioEngine.modhost.IsConnected() {
+				fmt.Fprintln(w, "live")
+			} else {
+				fmt.Fprintln(w, "design")
+			}
+			return
+		}
+		mode := r.URL.Query().Get("set")
+		if mode == "" {
+			// Try reading from body
+			buf := make([]byte, 32)
+			n, _ := r.Body.Read(buf)
+			mode = strings.TrimSpace(string(buf[:n]))
+		}
+		switch mode {
+		case "design":
+			if audioEngine != nil {
+				audioEngine.modhost.Disconnect()
+			}
+			fmt.Fprintln(w, "design")
+			log.Printf("Mode: design (mod-host released for MOD UI)")
+		case "live":
+			if audioEngine != nil {
+				if err := audioEngine.modhost.Reconnect(); err != nil {
+					http.Error(w, err.Error(), http.StatusServiceUnavailable)
+					return
+				}
+				audioEngine.SwitchPatch(0)
+			}
+			fmt.Fprintln(w, "live")
+			log.Printf("Mode: live (bridge controls mod-host)")
+		default:
+			http.Error(w, "use ?set=design or ?set=live", http.StatusBadRequest)
+		}
+	})
+
 	log.Printf("pedalboard-bridge %s listening on %s (MIDI: %s)", version, *addr, *port)
 	log.Fatal(http.ListenAndServe(*addr, nil))
 }

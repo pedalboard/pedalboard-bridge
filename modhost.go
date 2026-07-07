@@ -88,6 +88,33 @@ func (m *ModHost) Close() {
 	}
 }
 
+// Disconnect releases the connection so another client (e.g. MOD UI) can connect.
+func (m *ModHost) Disconnect() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.conn != nil {
+		log.Printf("mod-host: disconnecting (releasing for design mode)")
+		m.conn.Close()
+		m.conn = nil
+	}
+}
+
+// Reconnect re-establishes the connection (returning to live mode).
+func (m *ModHost) Reconnect() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.conn != nil {
+		m.conn.Close()
+	}
+	conn, err := net.DialTimeout("tcp", m.addr, 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("mod-host reconnect: %w", err)
+	}
+	m.conn = conn
+	log.Printf("mod-host: reconnected (live mode)")
+	return nil
+}
+
 // IsConnected returns true if the connection is established.
 func (m *ModHost) IsConnected() bool {
 	m.mu.Lock()
