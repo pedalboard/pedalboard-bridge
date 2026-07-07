@@ -51,7 +51,8 @@ func (m *ModHost) Send(cmd string) (string, error) {
 		return "", fmt.Errorf("mod-host send: %w", err)
 	}
 	// Read response (null-terminated)
-	m.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	// Timeout must be generous: heavy plugins like AIDA-X can take 10+ seconds to load
+	m.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
 	buf := make([]byte, 256)
 	n, err := m.conn.Read(buf)
 	m.conn.SetReadDeadline(time.Time{})

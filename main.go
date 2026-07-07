@@ -173,7 +173,7 @@ func main() {
 			}
 			audioEngine = NewAudioEngine(mh, cfg)
 			if mh.IsConnected() {
-				audioEngine.SwitchPatch(0)
+				go audioEngine.SwitchPatch(0)
 			}
 			log.Printf("Audio engine enabled: %d patches configured", len(cfg.Patches))
 		}
@@ -532,7 +532,8 @@ if(!location.hash.includes("/device/")){location.hash="#/device/__webconfig__"+e
 				designModeMu.Unlock()
 				audioEngine.modhost.Disconnect()
 			}
-			// Start MOD UI service (will stop bridge via Conflicts=)
+			// Wait for TCP socket to fully close before MOD UI connects
+			time.Sleep(500 * time.Millisecond)
 			exec.Command("sudo", "systemctl", "start", "pedalboard-modui").Run()
 			fmt.Fprintln(w, "design")
 			log.Printf("Mode: design (MOD UI at http://localhost:8888/)")
@@ -547,7 +548,7 @@ if(!location.hash.includes("/device/")){location.hash="#/device/__webconfig__"+e
 					http.Error(w, err.Error(), http.StatusServiceUnavailable)
 					return
 				}
-				audioEngine.SwitchPatch(0)
+				go audioEngine.SwitchPatch(0)
 			}
 			fmt.Fprintln(w, "live")
 			log.Printf("Mode: live (bridge controls mod-host)")
