@@ -519,9 +519,13 @@ if(!location.hash.includes("/device/")){location.hash="#/device/__webconfig__"+e
 			if audioEngine != nil {
 				audioEngine.modhost.Disconnect()
 			}
+			// Start MOD UI service (will stop bridge via Conflicts=)
+			exec.Command("sudo", "systemctl", "start", "pedalboard-modui").Run()
 			fmt.Fprintln(w, "design")
-			log.Printf("Mode: design (mod-host released for MOD UI)")
+			log.Printf("Mode: design (MOD UI at http://localhost:8888/)")
 		case "live":
+			// Stop MOD UI, reconnect bridge to mod-host
+			exec.Command("sudo", "systemctl", "stop", "pedalboard-modui").Run()
 			if audioEngine != nil {
 				if err := audioEngine.modhost.Reconnect(); err != nil {
 					http.Error(w, err.Error(), http.StatusServiceUnavailable)
