@@ -29,6 +29,9 @@ var upgrader = websocket.Upgrader{
 
 var version = "dev"
 
+var designMode bool
+var designModeMu sync.Mutex
+
 func findMidiDevice(portName string) (string, error) {
 	data, err := os.ReadFile("/proc/asound/cards")
 	if err != nil {
@@ -146,9 +149,16 @@ func main() {
 			if err := mh.Connect(); err != nil {
 				log.Printf("mod-host: %v (audio disabled, will retry)", err)
 				// Start retry goroutine
-				go func() {
+				// Design mode flag — suppresses mod-host auto-reconnect
+			go func() {
 					for {
 						time.Sleep(5 * time.Second)
+						designModeMu.Lock()
+						inDesign := designMode
+						designModeMu.Unlock()
+						if inDesign {
+							continue
+						}
 						if !mh.IsConnected() {
 							if err := mh.Connect(); err == nil {
 								log.Printf("mod-host reconnected")
@@ -517,6 +527,9 @@ if(!location.hash.includes("/device/")){location.hash="#/device/__webconfig__"+e
 		switch mode {
 		case "design":
 			if audioEngine != nil {
+				designModeMu.Lock()
+				designMode = true
+				designModeMu.Unlock()
 				audioEngine.modhost.Disconnect()
 			}
 			// Start MOD UI service (will stop bridge via Conflicts=)
@@ -527,6 +540,9 @@ if(!location.hash.includes("/device/")){location.hash="#/device/__webconfig__"+e
 			// Stop MOD UI, reconnect bridge to mod-host
 			exec.Command("sudo", "systemctl", "stop", "pedalboard-modui").Run()
 			if audioEngine != nil {
+				designModeMu.Lock()
+				designMode = false
+				designModeMu.Unlock()
 				if err := audioEngine.modhost.Reconnect(); err != nil {
 					http.Error(w, err.Error(), http.StatusServiceUnavailable)
 					return
