@@ -16,8 +16,24 @@ type AudioPatch struct {
 
 // PluginSlot represents a plugin in the chain.
 type PluginSlot struct {
-	URI string `json:"uri"`
-	ID  int    `json:"id"`
+	URI    string `json:"uri"`
+	ID     int    `json:"id"`
+	Input  string `json:"input,omitempty"`  // audio input port name (default: "lv2_audio_in_1")
+	Output string `json:"output,omitempty"` // audio output port name (default: "lv2_audio_out_1")
+}
+
+func (p PluginSlot) inputPort() string {
+	if p.Input != "" {
+		return fmt.Sprintf("effect_%d:%s", p.ID, p.Input)
+	}
+	return fmt.Sprintf("effect_%d:lv2_audio_in_1", p.ID)
+}
+
+func (p PluginSlot) outputPort() string {
+	if p.Output != "" {
+		return fmt.Sprintf("effect_%d:%s", p.ID, p.Output)
+	}
+	return fmt.Sprintf("effect_%d:lv2_audio_out_1", p.ID)
 }
 
 // ParamValue sets a parameter on a plugin instance.
@@ -93,19 +109,15 @@ func (e *AudioEngine) SwitchPatch(presetIdx int) error {
 	// Connect the chain: capture → plugin 0 → plugin 1 → ... → playback
 	if len(patch.Plugins) > 0 {
 		// Connect capture to first plugin
-		first := fmt.Sprintf("effect_%d:lv2_audio_in_1", patch.Plugins[0].ID)
-		e.modhost.ConnectPorts(e.config.CapturePort, first)
+		e.modhost.ConnectPorts(e.config.CapturePort, patch.Plugins[0].inputPort())
 
 		// Connect plugins in series
 		for i := 0; i < len(patch.Plugins)-1; i++ {
-			from := fmt.Sprintf("effect_%d:lv2_audio_out_1", patch.Plugins[i].ID)
-			to := fmt.Sprintf("effect_%d:lv2_audio_in_1", patch.Plugins[i+1].ID)
-			e.modhost.ConnectPorts(from, to)
+			e.modhost.ConnectPorts(patch.Plugins[i].outputPort(), patch.Plugins[i+1].inputPort())
 		}
 
 		// Connect last plugin to playback
-		last := fmt.Sprintf("effect_%d:lv2_audio_out_1", patch.Plugins[len(patch.Plugins)-1].ID)
-		e.modhost.ConnectPorts(last, e.config.PlaybackPort)
+		e.modhost.ConnectPorts(patch.Plugins[len(patch.Plugins)-1].outputPort(), e.config.PlaybackPort)
 	}
 
 	// Set parameters

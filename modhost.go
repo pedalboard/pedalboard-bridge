@@ -126,12 +126,9 @@ func (m *ModHost) IsConnected() bool {
 
 // RemoveAll removes all loaded plugin instances.
 func (m *ModHost) RemoveAll() error {
-	resp, err := m.Send("remove -1")
-	if err != nil {
-		return err
-	}
-	if !strings.HasPrefix(resp, "resp 0") {
-		log.Printf("mod-host remove_all: %s", resp)
+	// Remove instances 0-9 (covers typical usage)
+	for i := 0; i < 10; i++ {
+		m.Send(fmt.Sprintf("remove %d", i))
 	}
 	return nil
 }
@@ -142,7 +139,9 @@ func (m *ModHost) Add(uri string, instanceID int) error {
 	if err != nil {
 		return err
 	}
-	if !strings.HasPrefix(resp, "resp 0") {
+	// Success: "resp <instance_id>" where instance_id matches what we requested
+	// Error: "resp -<error_code>"
+	if strings.HasPrefix(resp, "resp -") {
 		return fmt.Errorf("mod-host add failed: %s", resp)
 	}
 	return nil
