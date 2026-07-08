@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -51,8 +52,15 @@ func (m *ModHost) Send(cmd string) (string, error) {
 		return "", fmt.Errorf("mod-host send: %w", err)
 	}
 	// Read response (null-terminated)
-	// Timeout must be generous: heavy plugins like AIDA-X can take 10+ seconds to load
-	m.conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	// Timeout must be generous: heavy plugins like AIDA-X can take 10+ seconds to load.
+	// MOD_HOST_TIMEOUT env var can override (e.g., "2s" for testing).
+	timeout := 30 * time.Second
+	if t := os.Getenv("MOD_HOST_TIMEOUT"); t != "" {
+		if d, err := time.ParseDuration(t); err == nil {
+			timeout = d
+		}
+	}
+	m.conn.SetReadDeadline(time.Now().Add(timeout))
 	buf := make([]byte, 256)
 	n, err := m.conn.Read(buf)
 	m.conn.SetReadDeadline(time.Time{})
@@ -127,10 +135,13 @@ func (m *ModHost) IsConnected() bool {
 
 // RemoveAll removes all loaded plugin instances.
 func (m *ModHost) RemoveAll() error {
-	// Remove instances 0-9 (covers typical usage)
+	// Remove instances 0-9 (covers typical usage).
+	// Use SendNoReply because mod-host doesn't respond to remove
+	// of non-existent instances, which would block Send() for 30s.
 	for i := 0; i < 10; i++ {
-		m.Send(fmt.Sprintf("remove %d", i))
+		m.SendNoReply(fmt.Sprintf("remove %d", i))
 	}
+	// Small delay for mod-host to process removals before we add new plugins
 	return nil
 }
 

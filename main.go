@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -87,9 +88,17 @@ func main() {
 
 	// Connect to MIDI device
 	connect := func() error {
-		device, err := findMidiDevice(*port)
-		if err != nil {
-			return err
+		var device string
+		if strings.HasPrefix(*port, "/") {
+			// Direct path to device or FIFO (e.g. /tmp/midi-fifo)
+			device = *port
+		} else {
+			// Search by name in /proc/asound/cards
+			var err error
+			device, err = findMidiDevice(*port)
+			if err != nil {
+				return err
+			}
 		}
 		return midi.Open(device)
 	}

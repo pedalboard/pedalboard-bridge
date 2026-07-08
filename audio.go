@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 )
 
 // AudioPatch defines the audio plugin chain for a single preset.
@@ -97,6 +98,9 @@ func (e *AudioEngine) SwitchPatch(presetIdx int) error {
 
 	// Remove all current plugins
 	e.modhost.RemoveAll()
+
+	// Brief pause for mod-host to finish removals before loading new plugins
+	time.Sleep(100 * time.Millisecond)
 
 	// Load new plugins
 	for _, plugin := range patch.Plugins {
