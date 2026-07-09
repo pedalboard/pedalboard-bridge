@@ -1,11 +1,9 @@
 package main
 
 import (
-	"embed"
 	"encoding/hex"
 	"flag"
 	"fmt"
-	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -14,9 +12,6 @@ import (
 
 	"github.com/gorilla/websocket"
 )
-
-//go:embed ui/*
-var uiFiles embed.FS
 
 var version = "dev"
 
@@ -147,30 +142,17 @@ func main() {
 		jackMidi.Send(data)
 	}
 
-	// Serve embedded UI
-	uiFS, _ := fs.Sub(uiFiles, "ui")
-	fileServer := http.FileServer(http.FS(uiFS))
+	// Status page
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-			indexData, err := uiFiles.ReadFile("ui/index.html")
-			if err != nil {
-				http.Error(w, "not found", 404)
-				return
-			}
-			autoConnect := `<script>
-
-if(!location.hash.includes("/device/")){location.hash="#/device/__webconfig__"+encodeURIComponent(location.host)}
-</script>`
-			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, autoConnect)
-			w.Write(indexData)
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
 			return
 		}
-		fileServer.ServeHTTP(w, r)
+		w.Header().Set("Content-Type", "text/plain")
+		fmt.Fprintf(w, "pedalboard-bridge %s\n", version)
 	})
 
 	// Register handlers
-	http.HandleFunc("/config", handleConfig(&clientMu, &activeConn, &clientReady, midiSend))
 	http.HandleFunc("/raw", handleRaw(&clientMu, &activeConn, &clientReady, midiSend))
 	http.HandleFunc("/monitor", handleMonitor(&clientMu, &monitorConn))
 	http.HandleFunc("/flash", handleFlash())
