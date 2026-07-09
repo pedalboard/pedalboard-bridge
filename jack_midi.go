@@ -15,6 +15,7 @@ type JackMidi struct {
 	inPort  *jack.Port
 	outPort *jack.Port
 	dataCh  chan []byte
+	outCh   chan []byte
 }
 
 // NewJackMidi creates and activates a JACK client with MIDI ports.
@@ -27,6 +28,7 @@ func NewJackMidi(clientName string) (*JackMidi, error) {
 	jm := &JackMidi{
 		client: client,
 		dataCh: make(chan []byte, 256),
+		outCh:  make(chan []byte, 256),
 	}
 
 	// Register MIDI input port (receives from RP2040 / simulator)
@@ -70,11 +72,15 @@ func (jm *JackMidi) DataCh() <-chan []byte {
 	return jm.dataCh
 }
 
-// Send writes a MIDI message to the output port on the next process cycle.
+// Send queues a MIDI message for output on the next process cycle.
 func (jm *JackMidi) Send(data []byte) {
-	// Output is handled via a pending buffer written in process().
-	// For now the bridge only reads MIDI — output support can be added later.
-	_ = data
+	msg := make([]byte, len(data))
+	copy(msg, data)
+	select {
+	case jm.outCh <- msg:
+	default:
+		log.Printf("JACK MIDI output buffer full, dropping message (%d bytes)", len(data))
+	}
 }
 
 // Close deactivates and closes the JACK client.
@@ -96,48 +102,88 @@ func (jm *JackMidi) Connect(sourcePort string) error {
 
 // AutoConnect watches for JACK MIDI ports matching the pattern and connects them.
 // Runs in a goroutine, retries every 2 seconds. Matching is case-insensitive.
+// Connects both directions: source → midi_in (for receiving) and midi_out → sink (for sending).
 func (jm *JackMidi) AutoConnect(pattern string) {
-	target := jm.client.GetName() + ":midi_in"
+	inTarget := jm.client.GetName() + ":midi_in"
+	outSource := jm.client.GetName() + ":midi_out"
 	lowerPattern := strings.ToLower(pattern)
 	go func() {
-		connected := ""
+		connectedIn := ""
+		connectedOut := ""
 		for {
 			time.Sleep(2 * time.Second)
 			if jm.client == nil {
 				return
 			}
-			// Get all MIDI output ports, filter by pattern (case-insensitive)
-			ports := jm.client.GetPorts("", jack.DEFAULT_MIDI_TYPE, jack.PortIsOutput)
 			ownPrefix := strings.ToLower(jm.client.GetName() + ":")
-			for _, port := range ports {
+
+			// Connect input: find MIDI output ports (capture) matching pattern → our midi_in
+			outPorts := jm.client.GetPorts("", jack.DEFAULT_MIDI_TYPE, jack.PortIsOutput)
+			for _, port := range outPorts {
 				lowerPort := strings.ToLower(port)
 				if strings.HasPrefix(lowerPort, ownPrefix) {
-					continue // skip own ports
+					continue
 				}
 				if !strings.Contains(lowerPort, lowerPattern) {
 					continue
 				}
-				if port == connected {
+				if port == connectedIn {
 					continue
 				}
-				code := jm.client.Connect(port, target)
+				code := jm.client.Connect(port, inTarget)
 				if code == 0 {
-					log.Printf("MIDI auto-connected: %s → %s", port, target)
-					connected = port
+					log.Printf("MIDI auto-connected: %s → %s", port, inTarget)
+					connectedIn = port
 				}
 			}
-			// Check if connected port still exists
-			if connected != "" {
+
+			// Connect output: find MIDI input ports (playback) matching pattern → our midi_out
+			inPorts := jm.client.GetPorts("", jack.DEFAULT_MIDI_TYPE, jack.PortIsInput)
+			for _, port := range inPorts {
+				lowerPort := strings.ToLower(port)
+				if strings.HasPrefix(lowerPort, ownPrefix) {
+					continue
+				}
+				if !strings.Contains(lowerPort, lowerPattern) {
+					continue
+				}
+				if port == connectedOut {
+					continue
+				}
+				code := jm.client.Connect(outSource, port)
+				if code == 0 {
+					log.Printf("MIDI auto-connected: %s → %s", outSource, port)
+					connectedOut = port
+				}
+			}
+
+			// Check if connected input port still exists
+			if connectedIn != "" {
 				found := false
-				for _, port := range ports {
-					if port == connected {
+				for _, port := range outPorts {
+					if port == connectedIn {
 						found = true
 						break
 					}
 				}
 				if !found {
-					log.Printf("MIDI disconnected: %s (waiting for reconnect...)", connected)
-					connected = ""
+					log.Printf("MIDI input disconnected: %s (waiting for reconnect...)", connectedIn)
+					connectedIn = ""
+				}
+			}
+
+			// Check if connected output port still exists
+			if connectedOut != "" {
+				found := false
+				for _, port := range inPorts {
+					if port == connectedOut {
+						found = true
+						break
+					}
+				}
+				if !found {
+					log.Printf("MIDI output disconnected: %s (waiting for reconnect...)", connectedOut)
+					connectedOut = ""
 				}
 			}
 		}
@@ -146,6 +192,7 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 
 // process is the JACK realtime callback.
 func (jm *JackMidi) process(nframes uint32) int {
+	// --- Input: read MIDI events from device ---
 	events := jm.inPort.GetMidiEvents(nframes)
 	for _, event := range events {
 		if len(event.Buffer) == 0 {
@@ -161,5 +208,19 @@ func (jm *JackMidi) process(nframes uint32) int {
 		default:
 		}
 	}
-	return 0
+
+	// --- Output: write pending MIDI messages to device ---
+	buffer := jm.outPort.MidiClearBuffer(nframes)
+	for {
+		select {
+		case msg := <-jm.outCh:
+			event := &jack.MidiData{
+				Time:   0,
+				Buffer: msg,
+			}
+			jm.outPort.MidiEventWrite(event, buffer)
+		default:
+			return 0
+		}
+	}
 }
