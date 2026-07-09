@@ -180,7 +180,7 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 	}()
 }
 
-// findPortsByAlias parses `jack_lsp -A` output to find MIDI ports whose alias
+// findPortsByAlias parses `jack_lsp -A -t` output to find MIDI ports whose alias
 // matches the pattern. Returns (capturePort, playbackPort) canonical names.
 func findPortsByAlias(pattern string) (string, string) {
 	out, err := exec.Command("jack_lsp", "-A", "-t").Output()
@@ -191,22 +191,32 @@ func findPortsByAlias(pattern string) (string, string) {
 	var capturePort, playbackPort string
 	lines := strings.Split(string(out), "\n")
 
-	for i := 0; i < len(lines); i++ {
-		portName := strings.TrimSpace(lines[i])
-		if portName == "" || strings.HasPrefix(portName, "\t") || strings.HasPrefix(portName, " ") {
+	i := 0
+	for i < len(lines) {
+		line := lines[i]
+		// Canonical port name: no leading whitespace
+		if line == "" || strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
+			i++
 			continue
 		}
+		portName := strings.TrimSpace(line)
+		i++
 
-		// Check if this is a MIDI port (look for type line)
+		// Collect aliases (lines starting with spaces) and type (lines starting with tab)
 		isMidi := false
-		aliases := []string{}
-		for j := i + 1; j < len(lines) && (strings.HasPrefix(lines[j], "   ") || strings.HasPrefix(lines[j], "\t")); j++ {
-			trimmed := strings.TrimSpace(lines[j])
-			if trimmed == "8 bit raw midi" {
-				isMidi = true
-			} else if trimmed != "" && !strings.Contains(trimmed, " bit ") {
+		var aliases []string
+		for i < len(lines) && (strings.HasPrefix(lines[i], " ") || strings.HasPrefix(lines[i], "\t")) {
+			trimmed := strings.TrimSpace(lines[i])
+			if strings.HasPrefix(lines[i], "\t") {
+				// Type line
+				if trimmed == "8 bit raw midi" {
+					isMidi = true
+				}
+			} else {
+				// Alias line (3 spaces)
 				aliases = append(aliases, strings.ToLower(trimmed))
 			}
+			i++
 		}
 
 		if !isMidi {
@@ -225,7 +235,7 @@ func findPortsByAlias(pattern string) (string, string) {
 			continue
 		}
 
-		// Determine direction from port name
+		// Determine direction from canonical port name
 		if strings.Contains(portName, "capture") {
 			capturePort = portName
 		} else if strings.Contains(portName, "playback") {
