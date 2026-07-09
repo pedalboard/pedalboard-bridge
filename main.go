@@ -22,7 +22,7 @@ var version = "dev"
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
-	midiConnect := flag.String("midi", "", "JACK MIDI port to auto-connect (e.g. 'a2j:OpenDeck')")
+	midiConnect := flag.String("midi", "", "JACK MIDI port to auto-connect (e.g. 'pedalboard-midi')")
 	showVersion := flag.Bool("version", false, "print version and exit")
 	audioConfig := flag.String("audio", "", "audio patch config JSON file (enables mod-host integration)")
 	modHostAddr := flag.String("modhost", "localhost:5555", "mod-host TCP address")
@@ -158,7 +158,7 @@ func main() {
 				return
 			}
 			autoConnect := `<script>
-localStorage.setItem("opendeck-webconfig-address",location.host);
+
 if(!location.hash.includes("/device/")){location.hash="#/device/__webconfig__"+encodeURIComponent(location.host)}
 </script>`
 			w.Header().Set("Content-Type", "text/html")

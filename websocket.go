@@ -13,7 +13,7 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
-// handleConfig handles the /config WebSocket endpoint (OpenDeck protocol).
+// handleConfig handles the /config WebSocket endpoint (legacy, kept for web UI compatibility).
 func handleConfig(clientMu *sync.Mutex, activeConn **websocket.Conn, clientReady *bool, midiSend func([]byte)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)

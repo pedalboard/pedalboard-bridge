@@ -1,32 +1,24 @@
-# opendeck-bridge
+# pedalboard-bridge
 
-WebSocket↔MIDI bridge with embedded OpenDeck configurator UI.
+WebSocket↔MIDI bridge for the pedalboard project. Runs on CM5, connects the CLI/web tools to the controller via JACK MIDI.
 
-Runs on the Raspberry Pi CM5 alongside the pedalboard hardware, serving the web configurator and bridging SysEx messages between the browser and the MIDI device.
+## Features
+
+- WebSocket endpoints for MIDI passthrough (`/raw`), monitoring (`/monitor`), and firmware flashing (`/flash`)
+- JACK MIDI auto-connect with alias-based device discovery
+- Audio engine: mod-host integration with preset↔patch switching via Program Change
+- MOD UI mode switching (`/mode` endpoint)
+- Embedded web UI
 
 ## Usage
 
-```sh
-opendeck-bridge -port "pedalboard" -addr ":8080"
 ```
-
-Then open `http://cm5-dev.home:8080` in your browser.
-
-## Building
-
-```sh
-# Native
-make build
-
-# Cross-compile for CM5 (arm64)
-make build-arm64
+pedalboard-bridge -midi "pedalboard-midi" -addr ":8080" -audio /etc/pedalboard/audio-patches.json
 ```
 
 ## Architecture
 
 ```
-Browser ←WebSocket→ opendeck-bridge ←ALSA MIDI→ pedalboard (hw:2,0,0)
-         (port 8080)                  (rtmidi)
+CLI/Browser ←WebSocket→ pedalboard-bridge ←JACK MIDI→ pedalboard-midi (RP2040)
+                                          ←TCP→ mod-host (LV2 plugins)
 ```
-
-The OpenDeckUI static files are embedded in the binary via `go:embed`.
