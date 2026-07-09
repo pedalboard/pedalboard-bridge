@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -109,10 +110,8 @@ func (jm *JackMidi) Connect(sourcePort string) error {
 }
 
 // AutoConnect watches for JACK MIDI ports and connects them to the bridge.
-// Runs in a goroutine, polls every 2 seconds. Connects to any MIDI port
-// that isn't our own and isn't the Midi-Through loopback device.
-// If a pattern is provided, it's used as an additional filter (case-insensitive
-// substring match on the canonical port name).
+// Discovers the pedalboard device by looking up port aliases (stable across
+// reconnects). Falls back to exclusion-based matching if alias lookup fails.
 func (jm *JackMidi) AutoConnect(pattern string) {
 	inTarget := jm.client.GetName() + ":midi_in"
 	outSource := jm.client.GetName() + ":midi_out"
@@ -125,56 +124,31 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 			if jm.client == nil {
 				return
 			}
-			ownPrefix := strings.ToLower(jm.client.GetName() + ":")
 
-			// Connect input: find MIDI output ports (capture) → our midi_in
-			outPorts := jm.client.GetPorts("", jack.DEFAULT_MIDI_TYPE, jack.PortIsOutput)
-			for _, port := range outPorts {
-				lowerPort := strings.ToLower(port)
-				if strings.HasPrefix(lowerPort, ownPrefix) {
-					continue
-				}
-				if isExcludedPort(lowerPort) {
-					continue
-				}
-				if lowerPattern != "" && lowerPattern != "auto" && !strings.Contains(lowerPort, lowerPattern) {
-					continue
-				}
-				if port == connectedIn {
-					continue
-				}
-				code := jm.client.Connect(port, inTarget)
+			// Discover ports by alias (stable names from JACK -X seq)
+			capturePort, playbackPort := findPortsByAlias(lowerPattern)
+
+			// Connect input (device capture → bridge midi_in)
+			if capturePort != "" && capturePort != connectedIn {
+				code := jm.client.Connect(capturePort, inTarget)
 				if code == 0 {
-					log.Printf("MIDI auto-connected: %s → %s", port, inTarget)
-					connectedIn = port
+					log.Printf("MIDI auto-connected: %s → %s", capturePort, inTarget)
+					connectedIn = capturePort
 				}
 			}
 
-			// Connect output: find MIDI input ports (playback) → our midi_out
-			inPorts := jm.client.GetPorts("", jack.DEFAULT_MIDI_TYPE, jack.PortIsInput)
-			for _, port := range inPorts {
-				lowerPort := strings.ToLower(port)
-				if strings.HasPrefix(lowerPort, ownPrefix) {
-					continue
-				}
-				if isExcludedPort(lowerPort) {
-					continue
-				}
-				if lowerPattern != "" && lowerPattern != "auto" && !strings.Contains(lowerPort, lowerPattern) {
-					continue
-				}
-				if port == connectedOut {
-					continue
-				}
-				code := jm.client.Connect(outSource, port)
+			// Connect output (bridge midi_out → device playback)
+			if playbackPort != "" && playbackPort != connectedOut {
+				code := jm.client.Connect(outSource, playbackPort)
 				if code == 0 {
-					log.Printf("MIDI auto-connected: %s → %s", outSource, port)
-					connectedOut = port
+					log.Printf("MIDI auto-connected: %s → %s", outSource, playbackPort)
+					connectedOut = playbackPort
 				}
 			}
 
-			// Check if connected input port still exists
+			// Check if connected ports still exist
 			if connectedIn != "" {
+				outPorts := jm.client.GetPorts("", jack.DEFAULT_MIDI_TYPE, jack.PortIsOutput)
 				found := false
 				for _, port := range outPorts {
 					if port == connectedIn {
@@ -188,8 +162,8 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 				}
 			}
 
-			// Check if connected output port still exists
 			if connectedOut != "" {
+				inPorts := jm.client.GetPorts("", jack.DEFAULT_MIDI_TYPE, jack.PortIsInput)
 				found := false
 				for _, port := range inPorts {
 					if port == connectedOut {
@@ -206,28 +180,60 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 	}()
 }
 
-// isExcludedPort returns true for ports that should never be auto-connected
-// (loopback devices, mod-host internal ports, etc.)
-func isExcludedPort(lowerPort string) bool {
-	excluded := []string{
-		"midi-through",
-		"midi_through",
-		"midi through",
-		"midithru",
-		"mod-host",
-		"mod-monitor",
-		"effect_",
+// findPortsByAlias parses `jack_lsp -A` output to find MIDI ports whose alias
+// matches the pattern. Returns (capturePort, playbackPort) canonical names.
+func findPortsByAlias(pattern string) (string, string) {
+	out, err := exec.Command("jack_lsp", "-A", "-t").Output()
+	if err != nil {
+		return "", ""
 	}
-	for _, ex := range excluded {
-		if strings.Contains(lowerPort, ex) {
-			return true
+
+	var capturePort, playbackPort string
+	lines := strings.Split(string(out), "\n")
+
+	for i := 0; i < len(lines); i++ {
+		portName := strings.TrimSpace(lines[i])
+		if portName == "" || strings.HasPrefix(portName, "\t") || strings.HasPrefix(portName, " ") {
+			continue
+		}
+
+		// Check if this is a MIDI port (look for type line)
+		isMidi := false
+		aliases := []string{}
+		for j := i + 1; j < len(lines) && (strings.HasPrefix(lines[j], "   ") || strings.HasPrefix(lines[j], "\t")); j++ {
+			trimmed := strings.TrimSpace(lines[j])
+			if trimmed == "8 bit raw midi" {
+				isMidi = true
+			} else if trimmed != "" && !strings.Contains(trimmed, " bit ") {
+				aliases = append(aliases, strings.ToLower(trimmed))
+			}
+		}
+
+		if !isMidi {
+			continue
+		}
+
+		// Check if any alias matches our pattern
+		matched := false
+		for _, alias := range aliases {
+			if strings.Contains(alias, pattern) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+
+		// Determine direction from port name
+		if strings.Contains(portName, "capture") {
+			capturePort = portName
+		} else if strings.Contains(portName, "playback") {
+			playbackPort = portName
 		}
 	}
-	// Exclude system:midi_capture_1 / system:midi_playback_1 (Midi-Through is always port 1)
-	if strings.HasSuffix(lowerPort, "_1") && strings.Contains(lowerPort, "system:midi") {
-		return true
-	}
-	return false
+
+	return capturePort, playbackPort
 }
 
 // process is the JACK realtime callback.
