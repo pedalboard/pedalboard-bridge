@@ -137,7 +137,7 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 				if isExcludedPort(lowerPort) {
 					continue
 				}
-				if lowerPattern != "" && !strings.Contains(lowerPort, lowerPattern) {
+				if lowerPattern != "" && lowerPattern != "auto" && !strings.Contains(lowerPort, lowerPattern) {
 					continue
 				}
 				if port == connectedIn {
@@ -160,7 +160,7 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 				if isExcludedPort(lowerPort) {
 					continue
 				}
-				if lowerPattern != "" && !strings.Contains(lowerPort, lowerPattern) {
+				if lowerPattern != "" && lowerPattern != "auto" && !strings.Contains(lowerPort, lowerPattern) {
 					continue
 				}
 				if port == connectedOut {
@@ -216,6 +216,7 @@ func isExcludedPort(lowerPort string) bool {
 		"midithru",
 		"mod-host",
 		"mod-monitor",
+		"effect_",
 	}
 	for _, ex := range excluded {
 		if strings.Contains(lowerPort, ex) {
