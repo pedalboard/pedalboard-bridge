@@ -16,6 +16,7 @@ type JackMidi struct {
 	outPort *jack.Port
 	dataCh  chan []byte
 	outCh   chan []byte
+	errCh   chan string
 }
 
 // NewJackMidi creates and activates a JACK client with MIDI ports.
@@ -29,6 +30,7 @@ func NewJackMidi(clientName string) (*JackMidi, error) {
 		client: client,
 		dataCh: make(chan []byte, 256),
 		outCh:  make(chan []byte, 256),
+		errCh:  make(chan string, 16),
 	}
 
 	// Register MIDI input port (receives from RP2040 / simulator)
@@ -64,6 +66,12 @@ func NewJackMidi(clientName string) (*JackMidi, error) {
 	}
 
 	log.Printf("JACK MIDI client '%s' active (ports: midi_in, midi_out)", clientName)
+	// Drain write errors from realtime callback
+	go func() {
+		for msg := range jm.errCh {
+			log.Print(msg)
+		}
+	}()
 	return jm, nil
 }
 
@@ -218,7 +226,12 @@ func (jm *JackMidi) process(nframes uint32) int {
 				Time:   0,
 				Buffer: msg,
 			}
-			jm.outPort.MidiEventWrite(event, buffer)
+			if ret := jm.outPort.MidiEventWrite(event, buffer); ret != 0 {
+				select {
+				case jm.errCh <- fmt.Sprintf("JACK MIDI write failed: ret=%d, msg_len=%d, nframes=%d", ret, len(msg), nframes):
+				default:
+				}
+			}
 		default:
 			return 0
 		}
