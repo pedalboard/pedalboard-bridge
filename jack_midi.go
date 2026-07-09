@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -147,6 +148,7 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 				if code == 0 {
 					log.Printf("MIDI auto-connected: %s → %s", port, inTarget)
 					connectedIn = port
+					setPortAlias(port, "pedalboard:capture")
 				}
 			}
 
@@ -170,6 +172,7 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 				if code == 0 {
 					log.Printf("MIDI auto-connected: %s → %s", outSource, port)
 					connectedOut = port
+					setPortAlias(port, "pedalboard:playback")
 				}
 			}
 
@@ -204,6 +207,14 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 			}
 		}
 	}()
+}
+
+// setPortAlias assigns a well-known alias to a JACK port so that other clients
+// (effects, scripts) can connect to a stable name regardless of port renumbering.
+func setPortAlias(port, alias string) {
+	if err := exec.Command("jack_alias", port, alias).Run(); err != nil {
+		log.Printf("jack_alias %s %s: %v", port, alias, err)
+	}
 }
 
 // isExcludedPort returns true for ports that should never be auto-connected
