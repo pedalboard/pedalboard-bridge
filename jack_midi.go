@@ -108,9 +108,11 @@ func (jm *JackMidi) Connect(sourcePort string) error {
 	return nil
 }
 
-// AutoConnect watches for JACK MIDI ports matching the pattern and connects them.
-// Runs in a goroutine, retries every 2 seconds. Matching is case-insensitive.
-// Connects both directions: source → midi_in (for receiving) and midi_out → sink (for sending).
+// AutoConnect watches for JACK MIDI ports and connects them to the bridge.
+// Runs in a goroutine, polls every 2 seconds. Connects to any MIDI port
+// that isn't our own and isn't the Midi-Through loopback device.
+// If a pattern is provided, it's used as an additional filter (case-insensitive
+// substring match on the canonical port name).
 func (jm *JackMidi) AutoConnect(pattern string) {
 	inTarget := jm.client.GetName() + ":midi_in"
 	outSource := jm.client.GetName() + ":midi_out"
@@ -125,14 +127,17 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 			}
 			ownPrefix := strings.ToLower(jm.client.GetName() + ":")
 
-			// Connect input: find MIDI output ports (capture) matching pattern → our midi_in
+			// Connect input: find MIDI output ports (capture) → our midi_in
 			outPorts := jm.client.GetPorts("", jack.DEFAULT_MIDI_TYPE, jack.PortIsOutput)
 			for _, port := range outPorts {
 				lowerPort := strings.ToLower(port)
 				if strings.HasPrefix(lowerPort, ownPrefix) {
 					continue
 				}
-				if !strings.Contains(lowerPort, lowerPattern) {
+				if isExcludedPort(lowerPort) {
+					continue
+				}
+				if lowerPattern != "" && !strings.Contains(lowerPort, lowerPattern) {
 					continue
 				}
 				if port == connectedIn {
@@ -145,14 +150,17 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 				}
 			}
 
-			// Connect output: find MIDI input ports (playback) matching pattern → our midi_out
+			// Connect output: find MIDI input ports (playback) → our midi_out
 			inPorts := jm.client.GetPorts("", jack.DEFAULT_MIDI_TYPE, jack.PortIsInput)
 			for _, port := range inPorts {
 				lowerPort := strings.ToLower(port)
 				if strings.HasPrefix(lowerPort, ownPrefix) {
 					continue
 				}
-				if !strings.Contains(lowerPort, lowerPattern) {
+				if isExcludedPort(lowerPort) {
+					continue
+				}
+				if lowerPattern != "" && !strings.Contains(lowerPort, lowerPattern) {
 					continue
 				}
 				if port == connectedOut {
@@ -196,6 +204,29 @@ func (jm *JackMidi) AutoConnect(pattern string) {
 			}
 		}
 	}()
+}
+
+// isExcludedPort returns true for ports that should never be auto-connected
+// (loopback devices, mod-host internal ports, etc.)
+func isExcludedPort(lowerPort string) bool {
+	excluded := []string{
+		"midi-through",
+		"midi_through",
+		"midi through",
+		"midithru",
+		"mod-host",
+		"mod-monitor",
+	}
+	for _, ex := range excluded {
+		if strings.Contains(lowerPort, ex) {
+			return true
+		}
+	}
+	// Exclude system:midi_capture_1 / system:midi_playback_1 (Midi-Through is always port 1)
+	if strings.HasSuffix(lowerPort, "_1") && strings.Contains(lowerPort, "system:midi") {
+		return true
+	}
+	return false
 }
 
 // process is the JACK realtime callback.
