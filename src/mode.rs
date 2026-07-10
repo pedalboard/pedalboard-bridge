@@ -83,7 +83,7 @@ pub async fn handle_mode(
                         ..
                     } = *bridge;
                     if let Some(engine) = audio_engine.as_mut()
-                        && let Err(e) = engine.switch_patch(modhost, 0).await
+                        && let Err(e) = engine.switch_snapshot_by_index(modhost, 0).await
                     {
                         tracing::warn!("Failed to restore audio patch: {e}");
                     }

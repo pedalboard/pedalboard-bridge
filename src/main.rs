@@ -90,7 +90,7 @@ async fn main() {
             Ok(config) => {
                 info!(
                     "Audio engine enabled: {} patches configured",
-                    config.patches.len()
+                    config.snapshots.len()
                 );
                 Some(AudioEngine::new(config))
             }
@@ -122,7 +122,7 @@ async fn main() {
                 ..
             } = *state;
             if let Some(engine) = audio_engine
-                && let Err(e) = engine.switch_patch(modhost, 0).await
+                && let Err(e) = engine.switch_snapshot_by_index(modhost, 0).await
             {
                 tracing::warn!("Initial patch switch failed: {e}");
             }
@@ -197,7 +197,8 @@ async fn main() {
                                 ..
                             } = *state;
                             if let Some(engine) = audio_engine.as_mut()
-                                && let Err(e) = engine.switch_patch(modhost, program).await
+                                && let Err(e) =
+                                    engine.switch_snapshot_by_index(modhost, program).await
                             {
                                 error!("Patch switch failed: {e}");
                             }
@@ -230,7 +231,7 @@ async fn main() {
                     ..
                 } = *state;
                 if let Some(engine) = audio_engine.as_mut() {
-                    let _ = engine.switch_patch(modhost, 0).await;
+                    let _ = engine.switch_snapshot_by_index(modhost, 0).await;
                 }
             }
         }
