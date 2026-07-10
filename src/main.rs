@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use axum::{
     Router,
+    extract::State,
     routing::{get, post},
 };
 use clap::Parser;
@@ -112,6 +113,7 @@ async fn main() {
         modhost_addr: args.modhost.clone(),
         midi_tx: None,
         sysex_tx: None,
+        jack: Some(jack.clone()),
     }));
 
     // 5. Switch to patch 0 on startup (non-blocking).
@@ -304,12 +306,38 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn handle_status() -> String {
-    format!(
-        "pedalboard-bridge {}-{}\n",
-        env!("CARGO_PKG_VERSION"),
-        env!("GIT_HASH")
-    )
+async fn handle_status(
+    State(state): State<Arc<Mutex<BridgeState>>>,
+) -> axum::Json<serde_json::Value> {
+    let bridge = state.lock().await;
+
+    let midi_info = bridge
+        .jack
+        .as_ref()
+        .map(|j| j.connection_info())
+        .unwrap_or_default();
+
+    let audio = bridge.audio_engine.as_ref().map(|engine| {
+        serde_json::json!({
+            "active_snapshot": engine.active_snapshot_name(),
+            "snapshots": engine.config.snapshots.len(),
+            "plugins": engine.config.plugins.len(),
+        })
+    });
+
+    axum::Json(serde_json::json!({
+        "version": format!("{}-{}", env!("CARGO_PKG_VERSION"), env!("GIT_HASH")),
+        "mode": if bridge.design_mode { "design" } else { "live" },
+        "midi": {
+            "connected": midi_info.input_port.is_some() || midi_info.output_port.is_some(),
+            "input": midi_info.input_port,
+            "output": midi_info.output_port,
+        },
+        "modhost": {
+            "connected": bridge.modhost.is_connected(),
+        },
+        "audio": audio,
+    }))
 }
 
 fn hex_encode(data: &[u8]) -> String {

@@ -24,6 +24,8 @@ pub struct BridgeState {
     pub midi_tx: Option<Arc<crate::jack_midi::JackMidi>>,
     /// SysEx broadcast receiver for firmware replies.
     pub sysex_tx: Option<tokio::sync::broadcast::Sender<Vec<u8>>>,
+    /// JACK MIDI client reference (for connection status).
+    pub jack: Option<Arc<crate::jack_midi::JackMidi>>,
 }
 
 #[derive(Deserialize)]

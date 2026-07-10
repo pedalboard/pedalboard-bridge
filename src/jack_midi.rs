@@ -9,6 +9,13 @@ pub type MidiMessage = Vec<u8>;
 
 const MIDI_TYPE: &str = "8 bit raw midi";
 
+/// MIDI port connection state (queryable from status endpoint).
+#[derive(Debug, Clone, Default)]
+pub struct MidiConnectionInfo {
+    pub input_port: Option<String>,
+    pub output_port: Option<String>,
+}
+
 /// JACK MIDI client with event-driven auto-connect.
 pub struct JackMidi {
     async_client: jack::AsyncClient<PortNotifier, JackProcess>,
@@ -16,6 +23,8 @@ pub struct JackMidi {
     client_name: String,
     /// Fires when JACK ports are registered/unregistered.
     port_change: Arc<Notify>,
+    /// Current MIDI connection state (shared with status endpoint).
+    connection_info: Arc<std::sync::Mutex<MidiConnectionInfo>>,
 }
 
 /// Notification handler — signals when ports change.
@@ -104,9 +113,15 @@ impl JackMidi {
                 out_tx,
                 client_name: actual_name,
                 port_change,
+                connection_info: Arc::new(std::sync::Mutex::new(MidiConnectionInfo::default())),
             },
             data_rx,
         ))
+    }
+
+    /// Query the current MIDI port connection state.
+    pub fn connection_info(&self) -> MidiConnectionInfo {
+        self.connection_info.lock().unwrap().clone()
     }
 
     /// Queue a MIDI message for output on the next process cycle.
@@ -235,6 +250,20 @@ impl JackMidi {
                         connected_out
                     );
                     connected_out.clear();
+                }
+
+                // Update shared connection state.
+                if let Ok(mut info) = jack.connection_info.lock() {
+                    info.input_port = if connected_in.is_empty() {
+                        None
+                    } else {
+                        Some(connected_in.clone())
+                    };
+                    info.output_port = if connected_out.is_empty() {
+                        None
+                    } else {
+                        Some(connected_out.clone())
+                    };
                 }
             }
         });

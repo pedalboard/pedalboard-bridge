@@ -764,6 +764,7 @@ dependencies = [
  "pedalboard-config",
  "postcard",
  "serde",
+ "serde_json",
  "serde_yaml",
  "socket2 0.5.10",
  "thiserror",
