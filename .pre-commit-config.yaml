@@ -11,18 +11,18 @@ repos:
       - id: check-merge-conflict
   - repo: local
     hooks:
-      - id: go-fmt
-        name: go fmt
-        entry: gofmt -l .
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: cargo fmt -- --check
         language: system
         pass_filenames: false
-      - id: go-vet
-        name: go vet
-        entry: go vet ./...
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: cargo clippy -- -D warnings
         language: system
         pass_filenames: false
-      - id: go-build
-        name: go build
-        entry: go build ./...
+      - id: cargo-build
+        name: cargo build
+        entry: cargo build
         language: system
         pass_filenames: false

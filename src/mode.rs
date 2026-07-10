@@ -77,11 +77,16 @@ pub async fn handle_mode(
                 Ok(client) => {
                     bridge.modhost = client;
                     // Restore audio patch 0.
-                    let BridgeState { ref mut modhost, ref mut audio_engine, .. } = *bridge;
+                    let BridgeState {
+                        ref mut modhost,
+                        ref mut audio_engine,
+                        ..
+                    } = *bridge;
                     if let Some(engine) = audio_engine.as_mut()
-                        && let Err(e) = engine.switch_patch(modhost, 0).await {
-                            tracing::warn!("Failed to restore audio patch: {e}");
-                        }
+                        && let Err(e) = engine.switch_patch(modhost, 0).await
+                    {
+                        tracing::warn!("Failed to restore audio patch: {e}");
+                    }
                     info!("Mode: live (bridge controls mod-host)");
                     (StatusCode::OK, "live\n".to_string())
                 }

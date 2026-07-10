@@ -96,10 +96,7 @@ impl AudioEngine {
         }
 
         let patch = &self.config.patches[preset_idx];
-        info!(
-            "Audio: switching to patch {} ({})",
-            preset_idx, patch.name
-        );
+        info!("Audio: switching to patch {} ({})", preset_idx, patch.name);
 
         // Remove all current plugins.
         modhost.remove_all().await?;

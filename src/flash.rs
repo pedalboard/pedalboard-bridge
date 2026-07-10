@@ -83,7 +83,10 @@ pub async fn handle_flash(mut multipart: Multipart) -> impl IntoResponse {
     let _ = Command::new("sync").status();
 
     info!("Flash: written {} bytes to {:?}", data.len(), uf2_path);
-    (StatusCode::OK, format!("OK: flashed {} bytes\n", data.len()))
+    (
+        StatusCode::OK,
+        format!("OK: flashed {} bytes\n", data.len()),
+    )
 }
 
 /// Wait up to 15 seconds for the RPI-RP2 UF2 drive to appear.
@@ -116,9 +119,7 @@ mod glob {
 
     pub fn glob(pattern: &str) -> Result<impl Iterator<Item = Result<PathBuf, ()>>, ()> {
         // Simple glob for /dev/disk/by-label/RPI-RP2*
-        let dir = std::path::Path::new(pattern)
-            .parent()
-            .ok_or(())?;
+        let dir = std::path::Path::new(pattern).parent().ok_or(())?;
         let prefix = std::path::Path::new(pattern)
             .file_name()
             .ok_or(())?

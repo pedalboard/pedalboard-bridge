@@ -1,22 +1,24 @@
 BINARY = pedalboard-bridge
 REMOTE = laenzi@cm5-dev.home
-REMOTE_DIR = ~/projects/pedalboard-bridge
+REMOTE_DIR = /tmp/bridge-rust
 DEPLOY_DIR = /udata/pedalboard-bridge
-GIT_HASH = $(shell git describe --always --dirty=+dev)
-LDFLAGS = -ldflags "-X main.version=0.1.0-$(GIT_HASH)"
 
-.PHONY: build deploy restart clean
+.PHONY: build lint deploy restart clean
 
 build:
-	go build $(LDFLAGS) -o $(BINARY) .
+	cargo build --release
+
+lint:
+	cargo fmt -- --check
+	cargo clippy -- -D warnings
 
 deploy:
-	git push
-	ssh $(REMOTE) 'cd $(REMOTE_DIR) && git pull && /usr/local/go/bin/go build -ldflags "-X main.version=0.1.0-$(GIT_HASH)" -o $(BINARY) .'
-	ssh $(REMOTE) "sudo systemctl stop $(BINARY) && sudo cp $(REMOTE_DIR)/$(BINARY) $(DEPLOY_DIR)/ && sudo systemctl start $(BINARY)"
+	rsync -av --exclude target . $(REMOTE):$(REMOTE_DIR)/
+	ssh $(REMOTE) 'source ~/.cargo/env && cd $(REMOTE_DIR) && cargo build --release'
+	ssh $(REMOTE) "sudo systemctl stop $(BINARY) && sudo cp $(REMOTE_DIR)/target/release/$(BINARY) $(DEPLOY_DIR)/$(BINARY)-rust && sudo systemctl start $(BINARY)"
 
 restart:
 	ssh $(REMOTE) "sudo systemctl restart $(BINARY)"
 
 clean:
-	rm -f $(BINARY)
+	cargo clean

@@ -54,8 +54,7 @@ impl JackMidi {
     pub fn new(
         client_name: &str,
     ) -> Result<(Self, mpsc::UnboundedReceiver<MidiMessage>), jack::Error> {
-        let (client, _status) =
-            Client::new(client_name, ClientOptions::default())?;
+        let (client, _status) = Client::new(client_name, ClientOptions::default())?;
 
         let in_port = client.register_port("midi_in", MidiIn::default())?;
         let out_port = client.register_port("midi_out", MidiOut::default())?;
@@ -113,36 +112,38 @@ impl JackMidi {
                 let (capture, playback) = find_ports_by_alias(&lower_pattern);
 
                 // Connect input (device capture → bridge midi_in).
-                if !capture.is_empty() && capture != connected_in
-                    && jack_connect(&capture, &in_target) {
-                        info!("MIDI auto-connected: {} → {}", capture, in_target);
-                        connected_in = capture.clone();
-                    }
+                if !capture.is_empty()
+                    && capture != connected_in
+                    && jack_connect(&capture, &in_target)
+                {
+                    info!("MIDI auto-connected: {} → {}", capture, in_target);
+                    connected_in = capture.clone();
+                }
 
                 // Connect output (bridge midi_out → device playback).
-                if !playback.is_empty() && playback != connected_out
-                    && jack_connect(&out_source, &playback) {
-                        info!("MIDI auto-connected: {} → {}", out_source, playback);
-                        connected_out = playback.clone();
-                    }
+                if !playback.is_empty()
+                    && playback != connected_out
+                    && jack_connect(&out_source, &playback)
+                {
+                    info!("MIDI auto-connected: {} → {}", out_source, playback);
+                    connected_out = playback.clone();
+                }
 
                 // Check if connected ports still exist.
-                if !connected_in.is_empty()
-                    && !port_exists(&connected_in) {
-                        info!(
-                            "MIDI input disconnected: {} (waiting for reconnect...)",
-                            connected_in
-                        );
-                        connected_in.clear();
-                    }
-                if !connected_out.is_empty()
-                    && !port_exists(&connected_out) {
-                        info!(
-                            "MIDI output disconnected: {} (waiting for reconnect...)",
-                            connected_out
-                        );
-                        connected_out.clear();
-                    }
+                if !connected_in.is_empty() && !port_exists(&connected_in) {
+                    info!(
+                        "MIDI input disconnected: {} (waiting for reconnect...)",
+                        connected_in
+                    );
+                    connected_in.clear();
+                }
+                if !connected_out.is_empty() && !port_exists(&connected_out) {
+                    info!(
+                        "MIDI output disconnected: {} (waiting for reconnect...)",
+                        connected_out
+                    );
+                    connected_out.clear();
+                }
             }
         });
     }
@@ -175,9 +176,7 @@ fn find_ports_by_alias(pattern: &str) -> (String, String) {
         // Collect aliases and type.
         let mut is_midi = false;
         let mut aliases = Vec::new();
-        while i < lines.len()
-            && (lines[i].starts_with(' ') || lines[i].starts_with('\t'))
-        {
+        while i < lines.len() && (lines[i].starts_with(' ') || lines[i].starts_with('\t')) {
             let trimmed = lines[i].trim();
             if lines[i].starts_with('\t') {
                 if trimmed == "8 bit raw midi" {

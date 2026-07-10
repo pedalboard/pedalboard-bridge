@@ -69,9 +69,7 @@ impl ModHostClient {
     pub async fn send(&mut self, command: &str) -> Result<Response, Error> {
         let stream = self.stream.as_mut().ok_or(Error::NotConnected)?;
 
-        stream
-            .write_all(format!("{command}\n").as_bytes())
-            .await?;
+        stream.write_all(format!("{command}\n").as_bytes()).await?;
 
         let mut buf = Vec::with_capacity(256);
         let result = timeout(self.timeout, async {
@@ -157,11 +155,8 @@ impl ModHostClient {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         // Drain any response that may have arrived.
         let mut buf = [0u8; 256];
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_millis(200),
-            stream.read(&mut buf),
-        )
-        .await;
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(200), stream.read(&mut buf))
+            .await;
         Ok(())
     }
 
@@ -185,11 +180,7 @@ impl ModHostClient {
     }
 
     /// Get a parameter value from a plugin instance.
-    pub async fn param_get(
-        &mut self,
-        instance_id: u32,
-        symbol: &str,
-    ) -> Result<f64, Error> {
+    pub async fn param_get(&mut self, instance_id: u32, symbol: &str) -> Result<f64, Error> {
         let resp = self
             .send(&format!("param_get {instance_id} {symbol}"))
             .await?;

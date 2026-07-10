@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod audio;
 mod flash;
 mod jack_midi;
@@ -8,9 +10,12 @@ mod websocket;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::{routing::{get, post}, Router};
+use axum::{
+    Router,
+    routing::{get, post},
+};
 use clap::Parser;
-use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tracing::{error, info, warn};
 
 use audio::{AudioConfig, AudioEngine};
@@ -83,7 +88,10 @@ async fn main() {
     let audio_engine = if let Some(ref audio_path) = args.audio {
         match AudioConfig::load(audio_path) {
             Ok(config) => {
-                info!("Audio engine enabled: {} patches configured", config.patches.len());
+                info!(
+                    "Audio engine enabled: {} patches configured",
+                    config.patches.len()
+                );
                 Some(AudioEngine::new(config))
             }
             Err(e) => {
@@ -108,11 +116,16 @@ async fn main() {
         let bridge_for_init = bridge_state.clone();
         tokio::spawn(async move {
             let mut state = bridge_for_init.lock().await;
-            let BridgeState { ref mut modhost, ref mut audio_engine, .. } = *state;
+            let BridgeState {
+                ref mut modhost,
+                ref mut audio_engine,
+                ..
+            } = *state;
             if let Some(engine) = audio_engine
-                && let Err(e) = engine.switch_patch(modhost, 0).await {
-                    tracing::warn!("Initial patch switch failed: {e}");
-                }
+                && let Err(e) = engine.switch_patch(modhost, 0).await
+            {
+                tracing::warn!("Initial patch switch failed: {e}");
+            }
         });
     }
 
@@ -178,11 +191,16 @@ async fn main() {
                             if state.design_mode || !state.modhost.is_connected() {
                                 return;
                             }
-                            let BridgeState { ref mut modhost, ref mut audio_engine, .. } = *state;
+                            let BridgeState {
+                                ref mut modhost,
+                                ref mut audio_engine,
+                                ..
+                            } = *state;
                             if let Some(engine) = audio_engine.as_mut()
-                                && let Err(e) = engine.switch_patch(modhost, program).await {
-                                    error!("Patch switch failed: {e}");
-                                }
+                                && let Err(e) = engine.switch_patch(modhost, program).await
+                            {
+                                error!("Patch switch failed: {e}");
+                            }
                         });
                         i += 2;
                     } else {
@@ -206,7 +224,11 @@ async fn main() {
             if let Ok(client) = ModHostClient::connect(&modhost_addr).await {
                 info!("mod-host reconnected");
                 state.modhost = client;
-                let BridgeState { ref mut modhost, ref mut audio_engine, .. } = *state;
+                let BridgeState {
+                    ref mut modhost,
+                    ref mut audio_engine,
+                    ..
+                } = *state;
                 if let Some(engine) = audio_engine.as_mut() {
                     let _ = engine.switch_patch(modhost, 0).await;
                 }
@@ -217,8 +239,14 @@ async fn main() {
     // 9. Build HTTP router and start listening.
     let app = Router::new()
         .route("/", get(handle_status))
-        .route("/raw", get(websocket::handle_raw).with_state(ws_state.clone()))
-        .route("/monitor", get(websocket::handle_monitor).with_state(ws_state))
+        .route(
+            "/raw",
+            get(websocket::handle_raw).with_state(ws_state.clone()),
+        )
+        .route(
+            "/monitor",
+            get(websocket::handle_monitor).with_state(ws_state),
+        )
         .route("/flash", post(flash::handle_flash))
         .route("/mode", get(mode::handle_mode).post(mode::handle_mode))
         .with_state(bridge_state)
@@ -237,8 +265,7 @@ async fn main() {
         socket.bind(&addr.into()).expect("Failed to bind");
         socket.listen(128).expect("Failed to listen");
         socket.set_nonblocking(true).expect("set_nonblocking");
-        tokio::net::TcpListener::from_std(socket.into())
-            .expect("Failed to create tokio listener")
+        tokio::net::TcpListener::from_std(socket.into()).expect("Failed to create tokio listener")
     };
     axum::serve(listener, app).await.unwrap();
 }
