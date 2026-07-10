@@ -40,13 +40,6 @@ struct Args {
     modhost: String,
 }
 
-/// Combined application state.
-#[derive(Clone)]
-pub struct AppState {
-    pub ws: Arc<WsState>,
-    pub bridge: Arc<Mutex<BridgeState>>,
-}
-
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -60,7 +53,19 @@ async fn main() {
         args.addr.clone()
     };
 
-    // Connect to mod-host (optional, for audio switching).
+    // 1. Start JACK MIDI client FIRST (blocking call, must happen before async work).
+    let (jack, mut midi_rx) = tokio::task::spawn_blocking(|| {
+        JackMidi::new("pedalboard-bridge").expect("Failed to create JACK MIDI client")
+    })
+    .await
+    .expect("JACK init task panicked");
+
+    if let Some(pattern) = &args.midi {
+        jack.auto_connect(pattern.clone());
+    }
+    let jack = Arc::new(jack);
+
+    // 2. Connect to mod-host (optional, for audio switching).
     let mut modhost_connected = false;
     let modhost = match ModHostClient::connect(&args.modhost).await {
         Ok(client) => {
@@ -74,7 +79,7 @@ async fn main() {
         }
     };
 
-    // Load audio config.
+    // 3. Load audio config.
     let audio_engine = if let Some(ref audio_path) = args.audio {
         match AudioConfig::load(audio_path) {
             Ok(config) => {
@@ -90,7 +95,7 @@ async fn main() {
         None
     };
 
-    // Shared bridge state.
+    // 4. Shared bridge state.
     let bridge_state = Arc::new(Mutex::new(BridgeState {
         modhost,
         audio_engine,
@@ -98,7 +103,7 @@ async fn main() {
         modhost_addr: args.modhost.clone(),
     }));
 
-    // Switch to patch 0 on startup (non-blocking).
+    // 5. Switch to patch 0 on startup (non-blocking).
     if modhost_connected {
         let bridge_for_init = bridge_state.clone();
         tokio::spawn(async move {
@@ -111,15 +116,7 @@ async fn main() {
         });
     }
 
-    // Start JACK MIDI client.
-    let (jack, mut midi_rx) = JackMidi::new("pedalboard-bridge")
-        .expect("Failed to create JACK MIDI client");
-
-    if let Some(pattern) = &args.midi {
-        jack.auto_connect(pattern.clone());
-    }
-
-    // WebSocket channels.
+    // 6. WebSocket channels.
     let (monitor_tx, _) = broadcast::channel::<Vec<u8>>(256);
     let (sysex_tx, _) = broadcast::channel::<Vec<u8>>(64);
     let (midi_out_tx, mut midi_out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
@@ -131,7 +128,6 @@ async fn main() {
     });
 
     // Forward MIDI output channel to JACK.
-    let jack = Arc::new(jack);
     let jack_for_output = jack.clone();
     tokio::spawn(async move {
         while let Some(data) = midi_out_rx.recv().await {
@@ -139,7 +135,7 @@ async fn main() {
         }
     });
 
-    // MIDI processing task.
+    // 7. MIDI processing task.
     let bridge_for_midi = bridge_state.clone();
     let monitor_tx_midi = monitor_tx.clone();
     let sysex_tx_midi = sysex_tx.clone();
@@ -197,7 +193,7 @@ async fn main() {
         }
     });
 
-    // mod-host reconnect loop (background).
+    // 8. mod-host reconnect loop (background).
     let bridge_for_reconnect = bridge_state.clone();
     let modhost_addr = args.modhost.clone();
     tokio::spawn(async move {
@@ -218,7 +214,7 @@ async fn main() {
         }
     });
 
-    // Build HTTP router.
+    // 9. Build HTTP router and start listening.
     let app = Router::new()
         .route("/", get(handle_status))
         .route("/raw", get(websocket::handle_raw).with_state(ws_state.clone()))
@@ -229,7 +225,21 @@ async fn main() {
         .layer(tower_http::cors::CorsLayer::permissive());
 
     info!("pedalboard-bridge listening on {}", listen_addr);
-    let listener = tokio::net::TcpListener::bind(&listen_addr).await.unwrap();
+    let listener = {
+        let socket = socket2::Socket::new(
+            socket2::Domain::IPV4,
+            socket2::Type::STREAM,
+            Some(socket2::Protocol::TCP),
+        )
+        .expect("Failed to create socket");
+        socket.set_reuse_address(true).expect("SO_REUSEADDR");
+        let addr: std::net::SocketAddr = listen_addr.parse().expect("Invalid listen address");
+        socket.bind(&addr.into()).expect("Failed to bind");
+        socket.listen(128).expect("Failed to listen");
+        socket.set_nonblocking(true).expect("set_nonblocking");
+        tokio::net::TcpListener::from_std(socket.into())
+            .expect("Failed to create tokio listener")
+    };
     axum::serve(listener, app).await.unwrap();
 }
 

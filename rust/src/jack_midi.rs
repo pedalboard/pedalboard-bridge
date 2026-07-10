@@ -55,7 +55,7 @@ impl JackMidi {
         client_name: &str,
     ) -> Result<(Self, mpsc::UnboundedReceiver<MidiMessage>), jack::Error> {
         let (client, _status) =
-            Client::new(client_name, ClientOptions::NO_START_SERVER)?;
+            Client::new(client_name, ClientOptions::default())?;
 
         let in_port = client.register_port("midi_in", MidiIn::default())?;
         let out_port = client.register_port("midi_out", MidiOut::default())?;
@@ -72,16 +72,17 @@ impl JackMidi {
 
         let async_client = client.activate_async((), process)?;
 
+        let actual_name = async_client.as_client().name().to_string();
         info!(
             "JACK MIDI client '{}' active (ports: midi_in, midi_out)",
-            client_name
+            actual_name
         );
 
         Ok((
             Self {
                 _async_client: async_client,
                 out_tx,
-                client_name: client_name.to_string(),
+                client_name: actual_name,
             },
             data_rx,
         ))
@@ -107,7 +108,7 @@ impl JackMidi {
             let mut connected_out = String::new();
 
             loop {
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
                 let (capture, playback) = find_ports_by_alias(&lower_pattern);
 
