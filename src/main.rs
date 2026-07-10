@@ -173,7 +173,7 @@ async fn main() {
                 }
             }
 
-            // Detect Program Change → switch audio patch.
+            // Detect Program Change and CC for audio engine.
             if data.len() >= 2 {
                 let mut i = 0;
                 while i < data.len() {
@@ -183,7 +183,9 @@ async fn main() {
                         continue;
                     }
                     let msg_type = status & 0xF0;
+                    let channel = (status & 0x0F) + 1;
                     if msg_type == 0xC0 && i + 1 < data.len() {
+                        // Program Change → switch snapshot.
                         let program = data[i + 1] as usize;
                         let bridge = bridge_for_midi.clone();
                         tokio::spawn(async move {
@@ -204,6 +206,26 @@ async fn main() {
                             }
                         });
                         i += 2;
+                    } else if msg_type == 0xB0 && i + 2 < data.len() {
+                        // Control Change → expression pedal routing.
+                        let cc = data[i + 1];
+                        let value = data[i + 2];
+                        let bridge = bridge_for_midi.clone();
+                        tokio::spawn(async move {
+                            let mut state = bridge.lock().await;
+                            if state.design_mode || !state.modhost.is_connected() {
+                                return;
+                            }
+                            let BridgeState {
+                                ref mut modhost,
+                                ref mut audio_engine,
+                                ..
+                            } = *state;
+                            if let Some(engine) = audio_engine.as_ref() {
+                                let _ = engine.handle_cc(modhost, channel, cc, value).await;
+                            }
+                        });
+                        i += 3;
                     } else {
                         i += 1;
                     }

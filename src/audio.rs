@@ -49,6 +49,36 @@ pub struct AudioConfig {
     pub connections: Vec<[String; 2]>,
     /// Named snapshots for instant tone switching.
     pub snapshots: Vec<AudioSnapshot>,
+    /// Expression pedal CC → plugin parameter mappings.
+    #[serde(default)]
+    pub expression: Option<Vec<ExpressionMapping>>,
+}
+
+/// Maps an incoming MIDI CC to one or more plugin parameters.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExpressionMapping {
+    /// MIDI CC number to listen for.
+    pub cc: u8,
+    /// MIDI channel (1-16). If omitted, matches any channel.
+    #[serde(default)]
+    pub channel: Option<u8>,
+    /// Plugin parameters to control.
+    pub targets: Vec<ExpressionTarget>,
+}
+
+/// A single plugin parameter controlled by an expression pedal.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ExpressionTarget {
+    /// mod-host instance ID.
+    pub instance: u32,
+    /// Port symbol name.
+    pub param: String,
+    /// Minimum value (at CC=0). Default: 0.0.
+    #[serde(default)]
+    pub min: Option<f64>,
+    /// Maximum value (at CC=127). Default: 1.0.
+    #[serde(default)]
+    pub max: Option<f64>,
 }
 
 /// Legacy format (audio-patches.json) for backward compatibility.
@@ -199,6 +229,7 @@ impl AudioConfig {
             plugins,
             connections,
             snapshots,
+            expression: None,
         }
     }
 }
@@ -380,6 +411,44 @@ impl AudioEngine {
             .map_err(crate::modhost::Error::Connect)?;
         fs::write(format!("{bundle_path}/presets.ttl"), presets)
             .map_err(crate::modhost::Error::Connect)?;
+
+        Ok(())
+    }
+
+    /// Handle an incoming MIDI CC message. If it matches an expression mapping,
+    /// send param_set to all targets (scales CC 0-127 to param min-max range).
+    pub async fn handle_cc(
+        &self,
+        modhost: &mut ModHostClient,
+        channel: u8,
+        cc: u8,
+        value: u8,
+    ) -> Result<(), crate::modhost::Error> {
+        let mappings = match &self.config.expression {
+            Some(m) => m,
+            None => return Ok(()),
+        };
+
+        for mapping in mappings {
+            if mapping.cc != cc {
+                continue;
+            }
+            if let Some(ch) = mapping.channel
+                && ch != channel
+            {
+                continue;
+            }
+
+            let normalized = value as f64 / 127.0;
+            for target in &mapping.targets {
+                let min = target.min.unwrap_or(0.0);
+                let max = target.max.unwrap_or(1.0);
+                let param_value = min + normalized * (max - min);
+                modhost
+                    .param_set(target.instance, &target.param, param_value)
+                    .await?;
+            }
+        }
 
         Ok(())
     }
