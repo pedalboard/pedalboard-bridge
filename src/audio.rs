@@ -111,7 +111,7 @@ impl AudioConfig {
     }
 
     /// Load audio configuration from a YAML string.
-    pub fn load_from_str(data: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load_from_str(data: &str) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         // Try as standalone audio config.
         if let Ok(config) = serde_yaml::from_str::<AudioConfig>(data) {
             return Ok(config);
@@ -146,6 +146,11 @@ impl AudioEngine {
             active_snapshot: None,
             rig_loaded: false,
         }
+    }
+
+    /// Get the name of the currently active snapshot (if any).
+    pub fn active_snapshot_name(&self) -> Option<&str> {
+        self.active_snapshot.as_deref()
     }
 
     /// Load the full rig at boot: add all plugins, make connections, load models.

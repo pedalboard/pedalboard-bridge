@@ -768,6 +768,7 @@ dependencies = [
  "socket2 0.5.10",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tokio-test",
  "tower-http",
  "tracing",
