@@ -109,6 +109,27 @@ impl AudioConfig {
 
         Err(format!("Failed to parse audio config from {}", path.display()).into())
     }
+
+    /// Load audio configuration from a YAML string.
+    pub fn load_from_str(data: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        // Try as standalone audio config.
+        if let Ok(config) = serde_yaml::from_str::<AudioConfig>(data) {
+            return Ok(config);
+        }
+
+        // Try as a setlist with audio section.
+        #[derive(Deserialize)]
+        struct SetlistWrapper {
+            audio: Option<AudioConfig>,
+        }
+        if let Ok(wrapper) = serde_yaml::from_str::<SetlistWrapper>(data)
+            && let Some(config) = wrapper.audio
+        {
+            return Ok(config);
+        }
+
+        Err("Failed to parse audio config from string".into())
+    }
 }
 
 /// Audio engine — manages the rig lifecycle and snapshot switching.

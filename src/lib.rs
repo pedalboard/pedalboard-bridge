@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 pub mod audio;
+pub mod deploy;
 pub mod flash;
 pub mod jack_midi;
 pub mod mode;

@@ -11,6 +11,7 @@ tower-http = { version = "0.6", features = ["cors"] }
 futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
+pedalboard-config = { git = "https://github.com/pedalboard/pedalboard-config" }
 clap = { version = "4", features = ["derive"] }
 jack = "0.13"
 socket2 = "0.5"

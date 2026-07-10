@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 
 mod audio;
+mod deploy;
 mod flash;
 mod jack_midi;
 mod mode;
@@ -271,6 +272,7 @@ async fn main() {
             get(websocket::handle_monitor).with_state(ws_state),
         )
         .route("/flash", post(flash::handle_flash))
+        .route("/deploy", post(deploy::handle_deploy))
         .route("/mode", get(mode::handle_mode).post(mode::handle_mode))
         .with_state(bridge_state)
         .layer(tower_http::cors::CorsLayer::permissive());
