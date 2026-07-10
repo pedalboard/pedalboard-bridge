@@ -476,3 +476,274 @@ impl AudioEngine {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_config() -> AudioConfig {
+        serde_yaml::from_str(
+            r#"
+plugins:
+  - id: 0
+    uri: "http://example.com/distortion"
+  - id: 1
+    uri: "http://example.com/amp-clean"
+    model: "/models/clean.json"
+  - id: 2
+    uri: "http://example.com/amp-crunch"
+    model: "/models/crunch.json"
+  - id: 3
+    uri: "http://example.com/reverb"
+connections:
+  - ["system:capture_2", "effect_0:in"]
+  - ["effect_0:out", "effect_1:in"]
+  - ["effect_0:out", "effect_2:in"]
+  - ["effect_1:out", "effect_3:in"]
+  - ["effect_2:out", "effect_3:in"]
+  - ["effect_3:out", "system:playback_2"]
+expression:
+  - { name: "Exp1", cc: 7 }
+  - { name: "Exp2", cc: 11 }
+snapshots:
+  - name: "Clean"
+    state:
+      "0": { bypassed: true }
+      "1": { bypassed: false, params: { PREGAIN: 0.3, MASTER: 0.8 } }
+      "2": { bypassed: true }
+      "3": { bypassed: false }
+    expression:
+      Exp1: { instance: 1, param: "MASTER", min: 0.0, max: 1.0 }
+      Exp2: { instance: 3, param: "decay_time", min: 0.5, max: 5.0 }
+  - name: "Crunch"
+    state:
+      "0": { bypassed: false, params: { DRIVE: 0.6 } }
+      "1": { bypassed: true }
+      "2": { bypassed: false, params: { PREGAIN: 0.7, MASTER: 0.6 } }
+      "3": { bypassed: true }
+    expression:
+      Exp1: { instance: 2, param: "PREGAIN", min: 0.3, max: 1.0 }
+      Exp2: { instance: 0, param: "DRIVE", min: 0.0, max: 1.0 }
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn parse_yaml_config() {
+        let config = sample_config();
+        assert_eq!(config.plugins.len(), 4);
+        assert_eq!(config.connections.len(), 6);
+        assert_eq!(config.snapshots.len(), 2);
+        assert_eq!(config.expression.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn parse_plugin_fields() {
+        let config = sample_config();
+        assert_eq!(config.plugins[0].id, 0);
+        assert_eq!(config.plugins[0].uri, "http://example.com/distortion");
+        assert!(config.plugins[0].model.is_none());
+        assert_eq!(
+            config.plugins[1].model.as_deref(),
+            Some("/models/clean.json")
+        );
+    }
+
+    #[test]
+    fn parse_snapshot_state() {
+        let config = sample_config();
+        let clean = &config.snapshots[0];
+        assert_eq!(clean.name, "Clean");
+
+        let inst0 = &clean.state["0"];
+        assert_eq!(inst0.bypassed, Some(true));
+        assert!(inst0.params.is_empty());
+
+        let inst1 = &clean.state["1"];
+        assert_eq!(inst1.bypassed, Some(false));
+        assert_eq!(inst1.params["PREGAIN"], 0.3);
+        assert_eq!(inst1.params["MASTER"], 0.8);
+    }
+
+    #[test]
+    fn parse_per_snapshot_expression() {
+        let config = sample_config();
+
+        // Clean: Exp1 → instance 1 MASTER
+        let clean = &config.snapshots[0];
+        let exp1 = &clean.expression["Exp1"];
+        assert_eq!(exp1.instance, 1);
+        assert_eq!(exp1.param, "MASTER");
+        assert_eq!(exp1.min, Some(0.0));
+        assert_eq!(exp1.max, Some(1.0));
+
+        // Crunch: Exp1 → instance 2 PREGAIN (different target!)
+        let crunch = &config.snapshots[1];
+        let exp1 = &crunch.expression["Exp1"];
+        assert_eq!(exp1.instance, 2);
+        assert_eq!(exp1.param, "PREGAIN");
+        assert_eq!(exp1.min, Some(0.3));
+        assert_eq!(exp1.max, Some(1.0));
+    }
+
+    #[test]
+    fn parse_pedal_mapping() {
+        let config = sample_config();
+        let mappings = config.expression.unwrap();
+        assert_eq!(mappings[0].name, "Exp1");
+        assert_eq!(mappings[0].cc, 7);
+        assert_eq!(mappings[1].name, "Exp2");
+        assert_eq!(mappings[1].cc, 11);
+    }
+
+    #[test]
+    fn parse_legacy_json() {
+        let json = r#"{
+            "capture_port": "system:capture_2",
+            "playback_port": "system:playback_2",
+            "patches": [
+                {
+                    "name": "Clean",
+                    "plugins": [
+                        { "uri": "http://example.com/amp", "id": 0 },
+                        { "uri": "http://example.com/reverb", "id": 1, "input": "in_l", "output": "out_l" }
+                    ],
+                    "params": [
+                        { "instance": 0, "param": "PREGAIN", "value": 0.5 }
+                    ]
+                },
+                {
+                    "name": "Crunch",
+                    "plugins": [
+                        { "uri": "http://example.com/amp", "id": 0 }
+                    ],
+                    "params": [
+                        { "instance": 0, "param": "PREGAIN", "value": 0.9 }
+                    ]
+                }
+            ]
+        }"#;
+
+        let legacy: LegacyAudioConfig = serde_json::from_str(json).unwrap();
+        let config = AudioConfig::from_legacy(legacy);
+
+        // Plugins from first patch.
+        assert_eq!(config.plugins.len(), 2);
+        assert_eq!(config.plugins[0].uri, "http://example.com/amp");
+        assert_eq!(config.plugins[1].uri, "http://example.com/reverb");
+
+        // Connections derived from first patch.
+        assert_eq!(config.connections.len(), 3);
+        assert_eq!(
+            config.connections[0],
+            ["system:capture_2", "effect_0:lv2_audio_in_1"]
+        );
+        assert_eq!(
+            config.connections[1],
+            ["effect_0:lv2_audio_out_1", "effect_1:in_l"]
+        );
+        assert_eq!(
+            config.connections[2],
+            ["effect_1:out_l", "system:playback_2"]
+        );
+
+        // Snapshots from patches.
+        assert_eq!(config.snapshots.len(), 2);
+        assert_eq!(config.snapshots[0].name, "Clean");
+        assert_eq!(config.snapshots[0].state["0"].params["PREGAIN"], 0.5);
+        assert_eq!(config.snapshots[1].name, "Crunch");
+        assert_eq!(config.snapshots[1].state["0"].params["PREGAIN"], 0.9);
+
+        // No expression in legacy.
+        assert!(config.expression.is_none());
+    }
+
+    #[test]
+    fn parse_setlist_with_audio() {
+        let yaml = r#"
+audio:
+  plugins:
+    - id: 0
+      uri: "http://example.com/amp"
+  connections:
+    - ["system:capture_2", "effect_0:in"]
+  snapshots:
+    - name: "Default"
+      state:
+        "0": { params: { GAIN: 0.5 } }
+
+presets:
+  - name: "Song 1"
+    audio_snapshot: "Default"
+    buttons:
+      A: { label: "Test", cc: 80, color: green }
+"#;
+
+        // Should parse as setlist wrapper.
+        #[derive(Deserialize)]
+        struct SetlistWrapper {
+            audio: Option<AudioConfig>,
+        }
+        let wrapper: SetlistWrapper = serde_yaml::from_str(yaml).unwrap();
+        let config = wrapper.audio.unwrap();
+        assert_eq!(config.plugins.len(), 1);
+        assert_eq!(config.snapshots[0].name, "Default");
+    }
+
+    #[test]
+    fn audio_engine_new() {
+        let config = sample_config();
+        let engine = AudioEngine::new(config);
+        assert!(!engine.rig_loaded);
+        assert!(engine.active_snapshot.is_none());
+    }
+
+    #[test]
+    fn model_bundle_generation() {
+        let bundle_path = "/tmp/pedalboard-test-bundle.lv2";
+        let _ = std::fs::remove_dir_all(bundle_path);
+
+        AudioEngine::create_model_bundle(
+            bundle_path,
+            5,
+            "http://aidadsp.cc/plugins/aidadsp-bundle/rt-neural-loader",
+            "/etc/pedalboard/models/test.json",
+        )
+        .unwrap();
+
+        let manifest = std::fs::read_to_string(format!("{bundle_path}/manifest.ttl")).unwrap();
+        assert!(manifest.contains("http://pedalboard.local/model#5"));
+        assert!(manifest.contains("pset:Preset"));
+        assert!(manifest.contains("rt-neural-loader"));
+
+        let presets = std::fs::read_to_string(format!("{bundle_path}/presets.ttl")).unwrap();
+        assert!(presets.contains("/etc/pedalboard/models/test.json"));
+        assert!(presets.contains("rt-neural-loader#json"));
+
+        // Cleanup.
+        let _ = std::fs::remove_dir_all(bundle_path);
+    }
+
+    #[test]
+    fn expression_cc_scaling() {
+        // Test the scaling math: CC 0-127 → min-max range.
+        let min = 0.5_f64;
+        let max = 2.0_f64;
+
+        // CC 0 → min
+        let normalized = 0.0 / 127.0;
+        let value = min + normalized * (max - min);
+        assert!((value - 0.5).abs() < 0.001);
+
+        // CC 127 → max
+        let normalized = 127.0 / 127.0;
+        let value = min + normalized * (max - min);
+        assert!((value - 2.0).abs() < 0.001);
+
+        // CC 64 → midpoint
+        let normalized = 64.0 / 127.0;
+        let value = min + normalized * (max - min);
+        assert!((value - 1.256).abs() < 0.01);
+    }
+}
