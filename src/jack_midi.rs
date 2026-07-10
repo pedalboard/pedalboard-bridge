@@ -1,6 +1,6 @@
-use std::process::Command;
+use std::sync::Arc;
 
-use jack::{Client, ClientOptions, MidiIn, MidiOut, Port, ProcessScope};
+use jack::{Client, ClientOptions, MidiIn, MidiOut, Port, PortFlags, ProcessScope};
 use tokio::sync::mpsc;
 use tracing::{info, warn};
 
@@ -9,7 +9,7 @@ pub type MidiMessage = Vec<u8>;
 
 /// JACK MIDI client with auto-connect by alias.
 pub struct JackMidi {
-    _async_client: jack::AsyncClient<(), JackProcess>,
+    async_client: jack::AsyncClient<(), JackProcess>,
     out_tx: mpsc::UnboundedSender<MidiMessage>,
     client_name: String,
 }
@@ -79,7 +79,7 @@ impl JackMidi {
 
         Ok((
             Self {
-                _async_client: async_client,
+                async_client,
                 out_tx,
                 client_name: actual_name,
             },
@@ -94,14 +94,78 @@ impl JackMidi {
         }
     }
 
+    /// Get the client name (as assigned by JACK).
+    pub fn name(&self) -> &str {
+        &self.client_name
+    }
+
+    /// Find MIDI ports matching a pattern in their aliases using native jack-rs API.
+    /// Returns (capture_port_name, playback_port_name).
+    fn find_ports_by_alias(&self, pattern: &str) -> (String, String) {
+        let client = self.async_client.as_client();
+        let lower_pattern = pattern.to_lowercase();
+
+        let mut capture_port = String::new();
+        let mut playback_port = String::new();
+
+        // Get all MIDI output ports (device capture → we receive from these).
+        let midi_outputs = client.ports(None, Some("8 bit raw midi"), PortFlags::IS_OUTPUT);
+        for port_name in &midi_outputs {
+            if let Some(port) = client.port_by_name(port_name)
+                && let Ok(aliases) = port.aliases()
+            {
+                let matched = aliases
+                    .iter()
+                    .any(|a| a.to_lowercase().contains(&lower_pattern));
+                if matched {
+                    capture_port = port_name.clone();
+                    break;
+                }
+            }
+        }
+
+        // Get all MIDI input ports (device playback → we send to these).
+        let midi_inputs = client.ports(None, Some("8 bit raw midi"), PortFlags::IS_INPUT);
+        for port_name in &midi_inputs {
+            if let Some(port) = client.port_by_name(port_name)
+                && let Ok(aliases) = port.aliases()
+            {
+                let matched = aliases
+                    .iter()
+                    .any(|a| a.to_lowercase().contains(&lower_pattern));
+                if matched {
+                    playback_port = port_name.clone();
+                    break;
+                }
+            }
+        }
+
+        (capture_port, playback_port)
+    }
+
+    /// Check if a port still exists.
+    fn port_exists(&self, port_name: &str) -> bool {
+        self.async_client
+            .as_client()
+            .port_by_name(port_name)
+            .is_some()
+    }
+
+    /// Connect two ports by name.
+    fn connect(&self, from: &str, to: &str) -> bool {
+        self.async_client
+            .as_client()
+            .connect_ports_by_name(from, to)
+            .is_ok()
+    }
+
     /// Start auto-connect loop: polls for MIDI ports matching `pattern` in aliases.
-    /// Spawns a tokio task that reconnects on device reboot.
-    pub fn auto_connect(&self, pattern: String) {
-        let client_name = self.client_name.clone();
+    /// Uses native jack-rs API (no subprocess calls).
+    pub fn auto_connect(self: &Arc<Self>, pattern: String) {
+        let jack = Arc::clone(self);
         tokio::spawn(async move {
-            let in_target = format!("{client_name}:midi_in");
-            let out_source = format!("{client_name}:midi_out");
-            let lower_pattern = pattern.to_lowercase();
+            let in_target = format!("{}:midi_in", jack.client_name);
+            let out_source = format!("{}:midi_out", jack.client_name);
 
             let mut connected_in = String::new();
             let mut connected_out = String::new();
@@ -109,12 +173,12 @@ impl JackMidi {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
-                let (capture, playback) = find_ports_by_alias(&lower_pattern);
+                let (capture, playback) = jack.find_ports_by_alias(&pattern);
 
                 // Connect input (device capture → bridge midi_in).
                 if !capture.is_empty()
                     && capture != connected_in
-                    && jack_connect(&capture, &in_target)
+                    && jack.connect(&capture, &in_target)
                 {
                     info!("MIDI auto-connected: {} → {}", capture, in_target);
                     connected_in = capture.clone();
@@ -123,21 +187,21 @@ impl JackMidi {
                 // Connect output (bridge midi_out → device playback).
                 if !playback.is_empty()
                     && playback != connected_out
-                    && jack_connect(&out_source, &playback)
+                    && jack.connect(&out_source, &playback)
                 {
                     info!("MIDI auto-connected: {} → {}", out_source, playback);
                     connected_out = playback.clone();
                 }
 
                 // Check if connected ports still exist.
-                if !connected_in.is_empty() && !port_exists(&connected_in) {
+                if !connected_in.is_empty() && !jack.port_exists(&connected_in) {
                     info!(
                         "MIDI input disconnected: {} (waiting for reconnect...)",
                         connected_in
                     );
                     connected_in.clear();
                 }
-                if !connected_out.is_empty() && !port_exists(&connected_out) {
+                if !connected_out.is_empty() && !jack.port_exists(&connected_out) {
                     info!(
                         "MIDI output disconnected: {} (waiting for reconnect...)",
                         connected_out
@@ -147,83 +211,4 @@ impl JackMidi {
             }
         });
     }
-}
-
-/// Find MIDI ports by alias using `jack_lsp -A -t`.
-fn find_ports_by_alias(pattern: &str) -> (String, String) {
-    let output = match Command::new("jack_lsp").args(["-A", "-t"]).output() {
-        Ok(o) => o,
-        Err(_) => return (String::new(), String::new()),
-    };
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    let lines: Vec<&str> = text.lines().collect();
-
-    let mut capture_port = String::new();
-    let mut playback_port = String::new();
-
-    let mut i = 0;
-    while i < lines.len() {
-        let line = lines[i];
-        // Canonical port name: no leading whitespace.
-        if line.is_empty() || line.starts_with(' ') || line.starts_with('\t') {
-            i += 1;
-            continue;
-        }
-        let port_name = line.trim().to_string();
-        i += 1;
-
-        // Collect aliases and type.
-        let mut is_midi = false;
-        let mut aliases = Vec::new();
-        while i < lines.len() && (lines[i].starts_with(' ') || lines[i].starts_with('\t')) {
-            let trimmed = lines[i].trim();
-            if lines[i].starts_with('\t') {
-                if trimmed == "8 bit raw midi" {
-                    is_midi = true;
-                }
-            } else {
-                aliases.push(trimmed.to_lowercase());
-            }
-            i += 1;
-        }
-
-        if !is_midi {
-            continue;
-        }
-
-        let matched = aliases.iter().any(|a| a.contains(pattern));
-        if !matched {
-            continue;
-        }
-
-        if port_name.contains("capture") {
-            capture_port = port_name;
-        } else if port_name.contains("playback") {
-            playback_port = port_name;
-        }
-    }
-
-    (capture_port, playback_port)
-}
-
-/// Connect two JACK ports via `jack_connect` command.
-fn jack_connect(from: &str, to: &str) -> bool {
-    Command::new("jack_connect")
-        .args([from, to])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
-/// Check if a JACK port exists via `jack_lsp`.
-fn port_exists(port_name: &str) -> bool {
-    Command::new("jack_lsp")
-        .output()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .any(|l| l.trim() == port_name)
-        })
-        .unwrap_or(false)
 }

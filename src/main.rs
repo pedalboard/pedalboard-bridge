@@ -65,10 +65,10 @@ async fn main() {
     .await
     .expect("JACK init task panicked");
 
+    let jack = Arc::new(jack);
     if let Some(pattern) = &args.midi {
         jack.auto_connect(pattern.clone());
     }
-    let jack = Arc::new(jack);
 
     // 2. Connect to mod-host (optional, for audio switching).
     let mut modhost_connected = false;
