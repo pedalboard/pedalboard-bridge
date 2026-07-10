@@ -649,7 +649,6 @@ dependencies = [
  "futures-util",
  "jack",
  "serde",
- "serde_json",
  "serde_yaml",
  "socket2 0.5.10",
  "thiserror",

@@ -85,46 +85,13 @@ pub struct ExpressionTarget {
     pub max: Option<f64>,
 }
 
-/// Legacy format (audio-patches.json) for backward compatibility.
-#[derive(Debug, Clone, Deserialize)]
-pub struct LegacyAudioConfig {
-    pub capture_port: String,
-    pub playback_port: String,
-    pub patches: Vec<LegacyPatch>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct LegacyPatch {
-    pub name: String,
-    pub plugins: Vec<LegacyPlugin>,
-    #[serde(default)]
-    pub params: Vec<LegacyParam>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct LegacyPlugin {
-    pub uri: String,
-    pub id: u32,
-    #[serde(default)]
-    pub input: Option<String>,
-    #[serde(default)]
-    pub output: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct LegacyParam {
-    pub instance: u32,
-    pub param: String,
-    pub value: f64,
-}
-
 impl AudioConfig {
-    /// Load audio configuration from a YAML or JSON file.
-    /// Supports both new format (plugins + snapshots) and legacy (patches).
+    /// Load audio configuration from a YAML file.
+    /// Supports both standalone audio config and setlist with embedded audio section.
     pub fn load(path: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         let data = std::fs::read_to_string(path)?;
 
-        // Try new YAML format first (may be embedded in setlist or standalone).
+        // Try as standalone audio config.
         if let Ok(config) = serde_yaml::from_str::<AudioConfig>(&data) {
             return Ok(config);
         }
@@ -140,102 +107,7 @@ impl AudioConfig {
             return Ok(config);
         }
 
-        // Fall back to legacy JSON format (audio-patches.json).
-        let legacy: LegacyAudioConfig = serde_json::from_str(&data)?;
-        Ok(Self::from_legacy(legacy))
-    }
-
-    /// Convert legacy audio-patches.json to new format.
-    fn from_legacy(legacy: LegacyAudioConfig) -> Self {
-        // Convert patches to snapshots (each patch = remove all + reload, not ideal but compatible).
-        let snapshots = legacy
-            .patches
-            .iter()
-            .map(|patch| {
-                let mut state = HashMap::new();
-                for plugin in &patch.plugins {
-                    let instance_state = AudioInstanceState {
-                        bypassed: Some(false),
-                        params: patch
-                            .params
-                            .iter()
-                            .filter(|p| p.instance == plugin.id)
-                            .map(|p| (p.param.clone(), p.value))
-                            .collect(),
-                    };
-                    state.insert(plugin.id.to_string(), instance_state);
-                }
-                AudioSnapshot {
-                    name: patch.name.clone(),
-                    state,
-                    expression: HashMap::new(),
-                }
-            })
-            .collect();
-
-        // Use plugins from the first patch as the base rig.
-        let plugins = legacy
-            .patches
-            .first()
-            .map(|p| {
-                p.plugins
-                    .iter()
-                    .map(|lp| AudioPlugin {
-                        id: lp.id,
-                        uri: lp.uri.clone(),
-                        model: None,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        // Build connections from first patch.
-        let connections = if let Some(patch) = legacy.patches.first() {
-            let mut conns = Vec::new();
-            if !patch.plugins.is_empty() {
-                let first = &patch.plugins[0];
-                let first_in = first
-                    .input
-                    .as_ref()
-                    .map(|i| format!("effect_{}:{}", first.id, i))
-                    .unwrap_or_else(|| format!("effect_{}:lv2_audio_in_1", first.id));
-                conns.push([legacy.capture_port.clone(), first_in]);
-
-                for i in 0..patch.plugins.len() - 1 {
-                    let curr = &patch.plugins[i];
-                    let next = &patch.plugins[i + 1];
-                    let from = curr
-                        .output
-                        .as_ref()
-                        .map(|o| format!("effect_{}:{}", curr.id, o))
-                        .unwrap_or_else(|| format!("effect_{}:lv2_audio_out_1", curr.id));
-                    let to = next
-                        .input
-                        .as_ref()
-                        .map(|i| format!("effect_{}:{}", next.id, i))
-                        .unwrap_or_else(|| format!("effect_{}:lv2_audio_in_1", next.id));
-                    conns.push([from, to]);
-                }
-
-                let last = patch.plugins.last().unwrap();
-                let last_out = last
-                    .output
-                    .as_ref()
-                    .map(|o| format!("effect_{}:{}", last.id, o))
-                    .unwrap_or_else(|| format!("effect_{}:lv2_audio_out_1", last.id));
-                conns.push([last_out, legacy.playback_port.clone()]);
-            }
-            conns
-        } else {
-            Vec::new()
-        };
-
-        Self {
-            plugins,
-            connections,
-            snapshots,
-            expression: None,
-        }
+        Err(format!("Failed to parse audio config from {}", path.display()).into())
     }
 }
 
@@ -595,68 +467,6 @@ snapshots:
         assert_eq!(mappings[0].cc, 7);
         assert_eq!(mappings[1].name, "Exp2");
         assert_eq!(mappings[1].cc, 11);
-    }
-
-    #[test]
-    fn parse_legacy_json() {
-        let json = r#"{
-            "capture_port": "system:capture_2",
-            "playback_port": "system:playback_2",
-            "patches": [
-                {
-                    "name": "Clean",
-                    "plugins": [
-                        { "uri": "http://example.com/amp", "id": 0 },
-                        { "uri": "http://example.com/reverb", "id": 1, "input": "in_l", "output": "out_l" }
-                    ],
-                    "params": [
-                        { "instance": 0, "param": "PREGAIN", "value": 0.5 }
-                    ]
-                },
-                {
-                    "name": "Crunch",
-                    "plugins": [
-                        { "uri": "http://example.com/amp", "id": 0 }
-                    ],
-                    "params": [
-                        { "instance": 0, "param": "PREGAIN", "value": 0.9 }
-                    ]
-                }
-            ]
-        }"#;
-
-        let legacy: LegacyAudioConfig = serde_json::from_str(json).unwrap();
-        let config = AudioConfig::from_legacy(legacy);
-
-        // Plugins from first patch.
-        assert_eq!(config.plugins.len(), 2);
-        assert_eq!(config.plugins[0].uri, "http://example.com/amp");
-        assert_eq!(config.plugins[1].uri, "http://example.com/reverb");
-
-        // Connections derived from first patch.
-        assert_eq!(config.connections.len(), 3);
-        assert_eq!(
-            config.connections[0],
-            ["system:capture_2", "effect_0:lv2_audio_in_1"]
-        );
-        assert_eq!(
-            config.connections[1],
-            ["effect_0:lv2_audio_out_1", "effect_1:in_l"]
-        );
-        assert_eq!(
-            config.connections[2],
-            ["effect_1:out_l", "system:playback_2"]
-        );
-
-        // Snapshots from patches.
-        assert_eq!(config.snapshots.len(), 2);
-        assert_eq!(config.snapshots[0].name, "Clean");
-        assert_eq!(config.snapshots[0].state["0"].params["PREGAIN"], 0.5);
-        assert_eq!(config.snapshots[1].name, "Crunch");
-        assert_eq!(config.snapshots[1].state["0"].params["PREGAIN"], 0.9);
-
-        // No expression in legacy.
-        assert!(config.expression.is_none());
     }
 
     #[test]
