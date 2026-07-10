@@ -38,6 +38,10 @@ pub struct AudioSnapshot {
     pub name: String,
     /// Per-instance state. Key is instance ID as string.
     pub state: HashMap<String, AudioInstanceState>,
+    /// Per-snapshot expression pedal assignments.
+    /// Key is pedal name ("Exp1", "Exp2"), value is the target parameter.
+    #[serde(default)]
+    pub expression: HashMap<String, ExpressionTarget>,
 }
 
 /// Top-level audio rig configuration.
@@ -49,24 +53,24 @@ pub struct AudioConfig {
     pub connections: Vec<[String; 2]>,
     /// Named snapshots for instant tone switching.
     pub snapshots: Vec<AudioSnapshot>,
-    /// Expression pedal CC → plugin parameter mappings.
+    /// Physical pedal → CC mapping (which CC number each pedal sends).
     #[serde(default)]
-    pub expression: Option<Vec<ExpressionMapping>>,
+    pub expression: Option<Vec<PedalMapping>>,
 }
 
-/// Maps an incoming MIDI CC to one or more plugin parameters.
+/// Maps a physical expression pedal to its MIDI CC number.
 #[derive(Debug, Clone, Deserialize)]
-pub struct ExpressionMapping {
-    /// MIDI CC number to listen for.
+pub struct PedalMapping {
+    /// Pedal name (e.g., "Exp1"). Referenced in snapshot expression assignments.
+    pub name: String,
+    /// MIDI CC number this pedal sends.
     pub cc: u8,
     /// MIDI channel (1-16). If omitted, matches any channel.
     #[serde(default)]
     pub channel: Option<u8>,
-    /// Plugin parameters to control.
-    pub targets: Vec<ExpressionTarget>,
 }
 
-/// A single plugin parameter controlled by an expression pedal.
+/// A plugin parameter controlled by an expression pedal.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ExpressionTarget {
     /// mod-host instance ID.
@@ -164,6 +168,7 @@ impl AudioConfig {
                 AudioSnapshot {
                     name: patch.name.clone(),
                     state,
+                    expression: HashMap::new(),
                 }
             })
             .collect();
@@ -415,41 +420,59 @@ impl AudioEngine {
         Ok(())
     }
 
-    /// Handle an incoming MIDI CC message. If it matches an expression mapping,
-    /// send param_set to all targets (scales CC 0-127 to param min-max range).
+    /// Handle an incoming MIDI CC message. Routes to plugin parameters
+    /// based on the active snapshot's expression assignments.
     pub async fn handle_cc(
         &self,
         modhost: &mut ModHostClient,
-        channel: u8,
+        _channel: u8,
         cc: u8,
         value: u8,
     ) -> Result<(), crate::modhost::Error> {
-        let mappings = match &self.config.expression {
-            Some(m) => m,
+        // Find which pedal name this CC belongs to.
+        let pedal_name = match &self.config.expression {
+            Some(mappings) => mappings
+                .iter()
+                .find(|m| m.cc == cc)
+                .map(|m| m.name.as_str()),
+            None => None,
+        };
+
+        let pedal_name = match pedal_name {
+            Some(name) => name,
+            None => return Ok(()), // CC not mapped to any pedal.
+        };
+
+        // Find the active snapshot's expression assignment for this pedal.
+        let snapshot_name = match &self.active_snapshot {
+            Some(name) => name.clone(),
             None => return Ok(()),
         };
 
-        for mapping in mappings {
-            if mapping.cc != cc {
-                continue;
-            }
-            if let Some(ch) = mapping.channel
-                && ch != channel
-            {
-                continue;
-            }
+        let snapshot = match self
+            .config
+            .snapshots
+            .iter()
+            .find(|s| s.name == snapshot_name)
+        {
+            Some(s) => s,
+            None => return Ok(()),
+        };
 
-            let normalized = value as f64 / 127.0;
-            for target in &mapping.targets {
-                let min = target.min.unwrap_or(0.0);
-                let max = target.max.unwrap_or(1.0);
-                let param_value = min + normalized * (max - min);
-                modhost
-                    .param_set(target.instance, &target.param, param_value)
-                    .await?;
-            }
-        }
+        let target = match snapshot.expression.get(pedal_name) {
+            Some(t) => t,
+            None => return Ok(()), // Pedal not assigned in this snapshot.
+        };
 
+        // Scale CC (0-127) to param range (min-max).
+        let normalized = value as f64 / 127.0;
+        let min = target.min.unwrap_or(0.0);
+        let max = target.max.unwrap_or(1.0);
+        let param_value = min + normalized * (max - min);
+
+        modhost
+            .param_set(target.instance, &target.param, param_value)
+            .await?;
         Ok(())
     }
 }
