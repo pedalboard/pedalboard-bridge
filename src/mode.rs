@@ -20,6 +20,10 @@ pub struct BridgeState {
     pub audio_engine: Option<AudioEngine>,
     pub design_mode: bool,
     pub modhost_addr: String,
+    /// JACK MIDI sender for PE SysEx to firmware.
+    pub midi_tx: Option<Arc<crate::jack_midi::JackMidi>>,
+    /// SysEx broadcast receiver for firmware replies.
+    pub sysex_tx: Option<tokio::sync::broadcast::Sender<Vec<u8>>>,
 }
 
 #[derive(Deserialize)]

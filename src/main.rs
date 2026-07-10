@@ -110,6 +110,8 @@ async fn main() {
         audio_engine,
         design_mode: false,
         modhost_addr: args.modhost.clone(),
+        midi_tx: None,
+        sysex_tx: None,
     }));
 
     // 5. Switch to patch 0 on startup (non-blocking).
@@ -140,6 +142,13 @@ async fn main() {
         monitor_tx: monitor_tx.clone(),
         sysex_tx: sysex_tx.clone(),
     });
+
+    // Provide JACK MIDI sender and SysEx channel to bridge state (for /deploy).
+    {
+        let mut state = bridge_state.lock().await;
+        state.midi_tx = Some(jack.clone());
+        state.sysex_tx = Some(sysex_tx.clone());
+    }
 
     // Forward MIDI output channel to JACK.
     let jack_for_output = jack.clone();

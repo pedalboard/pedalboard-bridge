@@ -1,10 +1,15 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
-use pedalboard_config::{Setlist, validate::validate};
+use pedalboard_config::{
+    Setlist,
+    convert::{yaml_global_to_protocol, yaml_to_presets},
+    validate::validate,
+};
 
 use crate::mode::BridgeState;
 
@@ -73,10 +78,72 @@ pub async fn handle_deploy(
         info!("Deploy: audio rig reconfigured");
     }
 
-    // TODO: Deploy MIDI presets to firmware via PE SysEx.
-    // This requires compiling presets and sending them over JACK MIDI.
-    // For now, the CLI still handles this directly.
-    let preset_count = setlist.presets.len();
+    // Deploy MIDI presets to firmware via PE SysEx over JACK MIDI.
+    let presets = yaml_to_presets(&setlist);
+    let preset_count = presets.len();
+
+    {
+        let bridge = state.lock().await;
+        if let (Some(jack), Some(sysex_tx)) = (&bridge.midi_tx, &bridge.sysex_tx) {
+            let mut sysex_rx = sysex_tx.subscribe();
+
+            // Upload global config if present.
+            if let Some(ref global_yaml) = setlist.global {
+                let gc = yaml_global_to_protocol(global_yaml);
+                if let Ok(serialized) = postcard::to_allocvec(&gc) {
+                    let msg = midi_controller::property_exchange::build_set_inquiry(
+                        [0x10, 0x20, 0x30, 0x40],
+                        [0x01, 0x02, 0x03, 0x04],
+                        0x7F,
+                        midi_controller::config::GLOBAL_CONFIG_RESOURCE,
+                        &serialized,
+                    );
+                    jack.send(&msg);
+                    // Wait for ACK.
+                    let _ = tokio::time::timeout(Duration::from_secs(5), sysex_rx.recv()).await;
+                }
+            }
+
+            // Upload presets.
+            for (idx, preset) in presets.iter().enumerate() {
+                if let Ok(serialized) = postcard::to_allocvec(preset) {
+                    let msg = midi_controller::property_exchange::build_set_inquiry(
+                        [0x10, 0x20, 0x30, 0x40],
+                        [0x01, 0x02, 0x03, 0x04],
+                        idx as u8 + 1,
+                        idx as u8,
+                        &serialized,
+                    );
+                    jack.send(&msg);
+                    // Wait for ACK.
+                    let _ = tokio::time::timeout(Duration::from_secs(5), sysex_rx.recv()).await;
+
+                    // Brief delay between presets for firmware flash writes.
+                    if presets.len() > 4 {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                }
+            }
+
+            // Clear stale presets.
+            let max_presets: u8 = 32;
+            for idx in (preset_count as u8)..max_presets {
+                let msg = midi_controller::property_exchange::build_set_inquiry(
+                    [0x10, 0x20, 0x30, 0x40],
+                    [0x01, 0x02, 0x03, 0x04],
+                    idx + 1,
+                    idx,
+                    &[], // empty = delete
+                );
+                jack.send(&msg);
+                let _ = tokio::time::timeout(Duration::from_millis(500), sysex_rx.recv()).await;
+            }
+
+            info!("Deploy: uploaded {} presets to firmware", preset_count);
+        } else {
+            warn!("Deploy: JACK MIDI not available, skipping firmware upload");
+        }
+    }
 
     info!("Deploy: accepted setlist ({} presets)", preset_count);
     (

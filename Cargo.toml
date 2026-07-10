@@ -12,6 +12,8 @@ futures-util = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 pedalboard-config = { git = "https://github.com/pedalboard/pedalboard-config" }
+midi-controller = { git = "https://github.com/pedalboard/midi-controller" }
+postcard = { version = "1", features = ["alloc"] }
 clap = { version = "4", features = ["derive"] }
 jack = "0.13"
 socket2 = "0.5"
