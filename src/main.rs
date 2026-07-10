@@ -26,7 +26,7 @@ use websocket::WsState;
 
 /// Pedalboard bridge — WebSocket↔MIDI + audio patch switching.
 #[derive(Parser)]
-#[command(version, about)]
+#[command(version = concat!(env!("CARGO_PKG_VERSION"), "-", env!("GIT_HASH")), about)]
 struct Args {
     /// Listen address for HTTP/WebSocket server.
     #[arg(short, long, default_value = ":8080")]
@@ -270,8 +270,12 @@ async fn main() {
     axum::serve(listener, app).await.unwrap();
 }
 
-async fn handle_status() -> &'static str {
-    concat!("pedalboard-bridge ", env!("CARGO_PKG_VERSION"), "\n")
+async fn handle_status() -> String {
+    format!(
+        "pedalboard-bridge {}-{}\n",
+        env!("CARGO_PKG_VERSION"),
+        env!("GIT_HASH")
+    )
 }
 
 fn hex_encode(data: &[u8]) -> String {
