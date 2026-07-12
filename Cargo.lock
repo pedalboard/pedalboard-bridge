@@ -779,7 +779,7 @@ dependencies = [
 [[package]]
 name = "pedalboard-config"
 version = "0.1.0"
-source = "git+https://github.com/pedalboard/pedalboard-config#64df0b11ea733c9482b06cc3e9e3ddc70f0e3547"
+source = "git+https://github.com/pedalboard/pedalboard-config#25789e0fa12e2c1730236f927c76c840ac858d65"
 dependencies = [
  "heapless 0.9.3",
  "midi-controller",
