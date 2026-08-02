@@ -1,0 +1,5 @@
+pedalboard-bridge (1.0.0) stable; urgency=medium
+
+  * Initial Debian package release.
+
+ -- Christof Laenzlinger <christof@laenzlinger.ch>  Sun, 02 Aug 2026 00:00:00 +0000

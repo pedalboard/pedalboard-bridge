@@ -1,0 +1,19 @@
+Source: pedalboard-bridge
+Section: sound
+Priority: optional
+Maintainer: Christof Laenzlinger <christof@laenzlinger.ch>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Homepage: https://github.com/pedalboard/pedalboard-bridge
+
+Package: pedalboard-bridge
+Architecture: arm64
+Depends: ${misc:Depends},
+ jackd2,
+ libjack-jackd2-0
+Description: Pedalboard Bridge — JACK MIDI + audio switching service
+ Rust service that bridges JACK MIDI, WebSocket, and mod-host audio
+ patch switching for the pedalboard audio system.
+ .
+ Provides the /mode endpoint for switching between gig and studio
+ modes, and handles SysEx commands from the MIDI controller.

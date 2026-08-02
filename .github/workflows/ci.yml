@@ -37,7 +37,7 @@ jobs:
           apt-get update -qq
           apt-get install -y --no-install-recommends \
             curl ca-certificates build-essential pkg-config git \
-            libjack-jackd2-dev libssl-dev
+            libjack-jackd2-dev libssl-dev debhelper dpkg-dev
           git config --global --add safe.directory "*"
       - name: Install Rust
         run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
@@ -48,10 +48,20 @@ jobs:
       - name: Rename binary for release
         run: cp target/release/pedalboard-bridge target/release/pedalboard-bridge-arm64
 
+      - name: Build .deb
+        run: |
+          cp target/release/pedalboard-bridge pedalboard-bridge
+          dpkg-buildpackage -us -uc -b
+          mkdir -p dist
+          mv ../pedalboard-bridge_*.deb dist/
+          cp target/release/pedalboard-bridge-arm64 dist/
+
       - uses: actions/upload-artifact@v4
         with:
           name: pedalboard-bridge-arm64
-          path: target/release/pedalboard-bridge-arm64
+          path: |
+            dist/pedalboard-bridge_*.deb
+            dist/pedalboard-bridge-arm64
 
       - name: Publish rolling latest release (main branch)
         if: github.ref == 'refs/heads/main'
@@ -60,10 +70,14 @@ jobs:
           tag_name: latest
           name: Latest (main)
           prerelease: true
-          files: target/release/pedalboard-bridge-arm64
+          files: |
+            dist/pedalboard-bridge_*.deb
+            dist/pedalboard-bridge-arm64
 
       - name: Publish versioned release (tag)
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: target/release/pedalboard-bridge-arm64
+          files: |
+            dist/pedalboard-bridge_*.deb
+            dist/pedalboard-bridge-arm64

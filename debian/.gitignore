@@ -1,0 +1,9 @@
+# debhelper build artefacts
+.debhelper/
+debhelper-build-stamp
+files
+*.substvars
+pedalboard-bridge/
+pedalboard-bridge.postinst.debhelper
+pedalboard-bridge.prerm.debhelper
+pedalboard-bridge.postrm.debhelper
