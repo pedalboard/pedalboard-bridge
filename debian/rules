@@ -3,6 +3,8 @@
 	dh $@
 
 # Binary is pre-built by CI — just package it.
+override_dh_auto_clean:
+
 override_dh_auto_build:
 
 override_dh_auto_install:
