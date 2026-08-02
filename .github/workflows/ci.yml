@@ -40,10 +40,15 @@ jobs:
             libjack-jackd2-dev libssl-dev debhelper dpkg-dev
           git config --global --add safe.directory "*"
       - name: Install Rust
-        run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+        run: |
+          export HOME=/root RUSTUP_HOME=/root/.rustup CARGO_HOME=/root/.cargo
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
       - name: Build
         env:
           GIT_HASH: ${{ github.sha }}
+          HOME: /root
+          RUSTUP_HOME: /root/.rustup
+          CARGO_HOME: /root/.cargo
         run: /root/.cargo/bin/cargo build --release
       - name: Rename binary for release
         run: cp target/release/pedalboard-bridge target/release/pedalboard-bridge-arm64
