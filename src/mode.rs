@@ -161,9 +161,10 @@ pub async fn handle_mode(
                     }
                 }
                 tokio::time::sleep(Duration::from_millis(1000)).await;
-                // Remove the nologin file systemd creates during isolate
-                // so SSH logins are allowed again.
+                // Remove nologin files systemd creates during isolate.
+                // May be /run/nologin or /etc/nologin depending on systemd version.
                 let _ = std::fs::remove_file("/run/nologin");
+                let _ = std::fs::remove_file("/etc/nologin");
             }
             // Reconnect bridge to mod-host.
             let addr = bridge.modhost_addr.clone();
