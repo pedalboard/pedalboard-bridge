@@ -14,12 +14,30 @@ use tracing::info;
 use crate::audio::AudioEngine;
 use crate::modhost::ModHostClient;
 
+/// Operating mode of the bridge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Mode {
+    /// Full stack: audio + MOD UI + SSH + WiFi + avahi + cron.
+    #[default]
+    Studio,
+    /// Minimal audio-only runtime: non-audio services stopped via systemd isolate.
+    Gig,
+}
+
+impl Mode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Mode::Studio => "studio",
+            Mode::Gig => "gig",
+        }
+    }
+}
+
 /// Shared bridge state for mode management.
 pub struct BridgeState {
     pub modhost: ModHostClient,
     pub audio_engine: Option<AudioEngine>,
-    pub design_mode: bool,
-    pub gig_mode: bool,
+    pub mode: Mode,
     pub modhost_addr: String,
     /// JACK MIDI sender for PE SysEx to firmware.
     pub midi_tx: Option<Arc<crate::jack_midi::JackMidi>>,
@@ -36,10 +54,9 @@ pub struct ModeQuery {
 }
 
 /// Handler for /mode endpoint.
-/// GET: returns current mode.
-/// POST ?set=design: disconnect mod-host, start MOD UI.
-/// POST ?set=live: stop MOD UI, reconnect, restore audio patch.
-/// POST ?set=gig: isolate to pedalboard-gig.target (minimal runtime).
+/// GET:             returns current mode ("studio" or "gig").
+/// POST ?set=studio: restore pedalboard-dev.target if coming from gig, reconnect mod-host.
+/// POST ?set=gig:    isolate to pedalboard-gig.target (minimal runtime, audio only).
 pub async fn handle_mode(
     method: Method,
     Query(query): Query<ModeQuery>,
@@ -48,64 +65,49 @@ pub async fn handle_mode(
     let mut bridge = state.lock().await;
 
     if method == Method::GET {
-        let mode = if bridge.gig_mode {
-            "gig"
-        } else if bridge.design_mode {
-            "design"
-        } else {
-            "live"
-        };
-        return (StatusCode::OK, format!("{mode}\n"));
+        return (StatusCode::OK, format!("{}\n", bridge.mode.as_str()));
     }
 
-    let mode = match &query.set {
+    let requested = match &query.set {
         Some(m) => m.clone(),
         None => {
             return (
                 StatusCode::BAD_REQUEST,
-                "use ?set=design, ?set=live, or ?set=gig\n".to_string(),
+                "use ?set=studio or ?set=gig\n".to_string(),
             );
         }
     };
 
-    match mode.as_str() {
-        "design" => {
-            if bridge.gig_mode {
-                // Restore dev target first.
-                let _ = Command::new("sudo")
+    match requested.as_str() {
+        "studio" => {
+            if bridge.mode == Mode::Gig {
+                // Restore dev target (re-enables SSH, WiFi, avahi, MOD UI, etc.).
+                let result = Command::new("sudo")
                     .args(["systemctl", "isolate", "pedalboard-dev.target"])
                     .status();
-                bridge.gig_mode = false;
+                match result {
+                    Ok(s) if s.success() => {}
+                    Ok(s) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("systemctl isolate failed with exit code: {}\n", s),
+                        );
+                    }
+                    Err(e) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            format!("failed to execute systemctl: {e}\n"),
+                        );
+                    }
+                }
                 tokio::time::sleep(Duration::from_millis(1000)).await;
             }
-            bridge.design_mode = true;
-            // Disconnect from mod-host so MOD UI can connect.
-            bridge.modhost = ModHostClient::disconnected();
-            tokio::time::sleep(Duration::from_millis(500)).await;
-            let _ = Command::new("sudo")
-                .args(["systemctl", "start", "pedalboard-modui"])
-                .status();
-            info!("Mode: design (MOD UI at http://localhost:8888/)");
-            (StatusCode::OK, "design\n".to_string())
-        }
-        "live" => {
-            if bridge.gig_mode {
-                // Restore dev target.
-                let _ = Command::new("sudo")
-                    .args(["systemctl", "isolate", "pedalboard-dev.target"])
-                    .status();
-                bridge.gig_mode = false;
-                tokio::time::sleep(Duration::from_millis(1000)).await;
-            }
-            // Stop MOD UI, reconnect bridge to mod-host.
-            let _ = Command::new("sudo")
-                .args(["systemctl", "stop", "pedalboard-modui"])
-                .status();
-            bridge.design_mode = false;
+            // Reconnect bridge to mod-host.
             let addr = bridge.modhost_addr.clone();
             match ModHostClient::connect(&addr).await {
                 Ok(client) => {
                     bridge.modhost = client;
+                    bridge.mode = Mode::Studio;
                     // Restore audio patch 0.
                     let BridgeState {
                         ref mut modhost,
@@ -117,8 +119,8 @@ pub async fn handle_mode(
                     {
                         tracing::warn!("Failed to restore audio patch: {e}");
                     }
-                    info!("Mode: live (bridge controls mod-host)");
-                    (StatusCode::OK, "live\n".to_string())
+                    info!("Mode: studio");
+                    (StatusCode::OK, "studio\n".to_string())
                 }
                 Err(e) => (
                     StatusCode::SERVICE_UNAVAILABLE,
@@ -127,25 +129,13 @@ pub async fn handle_mode(
             }
         }
         "gig" => {
-            // Stop MOD UI if in design mode.
-            if bridge.design_mode {
-                let _ = Command::new("sudo")
-                    .args(["systemctl", "stop", "pedalboard-modui"])
-                    .status();
-                bridge.design_mode = false;
-                // Reconnect mod-host.
-                let addr = bridge.modhost_addr.clone();
-                if let Ok(client) = ModHostClient::connect(&addr).await {
-                    bridge.modhost = client;
-                }
-            }
-            // Isolate to gig target (stops SSH, WiFi, avahi, cron, journald, getty).
+            // Isolate to gig target (stops SSH, WiFi, avahi, cron, journald, getty, MOD UI).
             let result = Command::new("sudo")
                 .args(["systemctl", "isolate", "pedalboard-gig.target"])
                 .status();
             match result {
                 Ok(status) if status.success() => {
-                    bridge.gig_mode = true;
+                    bridge.mode = Mode::Gig;
                     info!("Mode: gig (minimal runtime, non-audio services stopped)");
                     (StatusCode::OK, "gig\n".to_string())
                 }
@@ -161,7 +151,7 @@ pub async fn handle_mode(
         }
         _ => (
             StatusCode::BAD_REQUEST,
-            "use ?set=design, ?set=live, or ?set=gig\n".to_string(),
+            "use ?set=studio or ?set=gig\n".to_string(),
         ),
     }
 }

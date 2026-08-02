@@ -109,8 +109,7 @@ async fn main() {
     let bridge_state = Arc::new(Mutex::new(BridgeState {
         modhost,
         audio_engine,
-        design_mode: false,
-        gig_mode: false,
+        mode: mode::Mode::Studio,
         modhost_addr: args.modhost.clone(),
         midi_tx: None,
         sysex_tx: None,
@@ -203,7 +202,7 @@ async fn main() {
                         let bridge = bridge_for_midi.clone();
                         tokio::spawn(async move {
                             let mut state = bridge.lock().await;
-                            if state.design_mode || !state.modhost.is_connected() {
+                            if !state.modhost.is_connected() {
                                 return;
                             }
                             let BridgeState {
@@ -226,7 +225,7 @@ async fn main() {
                         let bridge = bridge_for_midi.clone();
                         tokio::spawn(async move {
                             let mut state = bridge.lock().await;
-                            if state.design_mode || !state.modhost.is_connected() {
+                            if !state.modhost.is_connected() {
                                 return;
                             }
                             let BridgeState {
@@ -254,7 +253,7 @@ async fn main() {
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(5)).await;
             let mut state = bridge_for_reconnect.lock().await;
-            if state.design_mode || state.modhost.is_connected() {
+            if state.modhost.is_connected() {
                 continue;
             }
             if let Ok(client) = ModHostClient::connect(&modhost_addr).await {
@@ -328,7 +327,7 @@ async fn handle_status(
 
     axum::Json(serde_json::json!({
         "version": format!("{}-{}", env!("CARGO_PKG_VERSION"), env!("GIT_HASH")),
-        "mode": if bridge.gig_mode { "gig" } else if bridge.design_mode { "design" } else { "live" },
+        "mode": bridge.mode.as_str(),
         "midi": {
             "connected": midi_info.input_port.is_some() || midi_info.output_port.is_some(),
             "input": midi_info.input_port,
