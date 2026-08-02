@@ -41,7 +41,25 @@ jobs:
         env:
           GIT_HASH: ${{ github.sha }}
         run: /root/.cargo/bin/cargo build --release
+      - name: Rename binary for release
+        run: cp target/release/pedalboard-bridge target/release/pedalboard-bridge-arm64
+
       - uses: actions/upload-artifact@v4
         with:
           name: pedalboard-bridge-arm64
-          path: target/release/pedalboard-bridge
+          path: target/release/pedalboard-bridge-arm64
+
+      - name: Publish rolling latest release (main branch)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest (main)
+          prerelease: true
+          files: target/release/pedalboard-bridge-arm64
+
+      - name: Publish versioned release (tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/release/pedalboard-bridge-arm64
