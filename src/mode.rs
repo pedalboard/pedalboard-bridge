@@ -19,6 +19,7 @@ pub struct BridgeState {
     pub modhost: ModHostClient,
     pub audio_engine: Option<AudioEngine>,
     pub design_mode: bool,
+    pub gig_mode: bool,
     pub modhost_addr: String,
     /// JACK MIDI sender for PE SysEx to firmware.
     pub midi_tx: Option<Arc<crate::jack_midi::JackMidi>>,
@@ -38,6 +39,7 @@ pub struct ModeQuery {
 /// GET: returns current mode.
 /// POST ?set=design: disconnect mod-host, start MOD UI.
 /// POST ?set=live: stop MOD UI, reconnect, restore audio patch.
+/// POST ?set=gig: isolate to pedalboard-gig.target (minimal runtime).
 pub async fn handle_mode(
     method: Method,
     Query(query): Query<ModeQuery>,
@@ -46,7 +48,13 @@ pub async fn handle_mode(
     let mut bridge = state.lock().await;
 
     if method == Method::GET {
-        let mode = if bridge.design_mode { "design" } else { "live" };
+        let mode = if bridge.gig_mode {
+            "gig"
+        } else if bridge.design_mode {
+            "design"
+        } else {
+            "live"
+        };
         return (StatusCode::OK, format!("{mode}\n"));
     }
 
@@ -55,13 +63,21 @@ pub async fn handle_mode(
         None => {
             return (
                 StatusCode::BAD_REQUEST,
-                "use ?set=design or ?set=live\n".to_string(),
+                "use ?set=design, ?set=live, or ?set=gig\n".to_string(),
             );
         }
     };
 
     match mode.as_str() {
         "design" => {
+            if bridge.gig_mode {
+                // Restore dev target first.
+                let _ = Command::new("sudo")
+                    .args(["systemctl", "isolate", "pedalboard-dev.target"])
+                    .status();
+                bridge.gig_mode = false;
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+            }
             bridge.design_mode = true;
             // Disconnect from mod-host so MOD UI can connect.
             bridge.modhost = ModHostClient::disconnected();
@@ -73,6 +89,14 @@ pub async fn handle_mode(
             (StatusCode::OK, "design\n".to_string())
         }
         "live" => {
+            if bridge.gig_mode {
+                // Restore dev target.
+                let _ = Command::new("sudo")
+                    .args(["systemctl", "isolate", "pedalboard-dev.target"])
+                    .status();
+                bridge.gig_mode = false;
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+            }
             // Stop MOD UI, reconnect bridge to mod-host.
             let _ = Command::new("sudo")
                 .args(["systemctl", "stop", "pedalboard-modui"])
@@ -102,9 +126,42 @@ pub async fn handle_mode(
                 ),
             }
         }
+        "gig" => {
+            // Stop MOD UI if in design mode.
+            if bridge.design_mode {
+                let _ = Command::new("sudo")
+                    .args(["systemctl", "stop", "pedalboard-modui"])
+                    .status();
+                bridge.design_mode = false;
+                // Reconnect mod-host.
+                let addr = bridge.modhost_addr.clone();
+                if let Ok(client) = ModHostClient::connect(&addr).await {
+                    bridge.modhost = client;
+                }
+            }
+            // Isolate to gig target (stops SSH, WiFi, avahi, cron, journald, getty).
+            let result = Command::new("sudo")
+                .args(["systemctl", "isolate", "pedalboard-gig.target"])
+                .status();
+            match result {
+                Ok(status) if status.success() => {
+                    bridge.gig_mode = true;
+                    info!("Mode: gig (minimal runtime, non-audio services stopped)");
+                    (StatusCode::OK, "gig\n".to_string())
+                }
+                Ok(status) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("systemctl isolate failed with exit code: {}\n", status),
+                ),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("failed to execute systemctl: {e}\n"),
+                ),
+            }
+        }
         _ => (
             StatusCode::BAD_REQUEST,
-            "use ?set=design or ?set=live\n".to_string(),
+            "use ?set=design, ?set=live, or ?set=gig\n".to_string(),
         ),
     }
 }
