@@ -2,6 +2,10 @@ name: CI
 on: [push]
 env:
   CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
 jobs:
   check:
     runs-on: ubuntu-latest
