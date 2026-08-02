@@ -53,6 +53,66 @@ pub struct ModeQuery {
     pub set: Option<String>,
 }
 
+/// Parse a gig-mode SysEx message from the controller.
+///
+/// Returns `Some(Mode::Gig)` for `F0 7D 01 01 F7` (enter gig)
+/// and `Some(Mode::Studio)` for `F0 7D 01 00 F7` (exit gig).
+/// Returns `None` for any other message.
+pub fn parse_gig_sysex(data: &[u8]) -> Option<Mode> {
+    match data {
+        [0xF0, 0x7D, 0x01, 0x01, 0xF7] => Some(Mode::Gig),
+        [0xF0, 0x7D, 0x01, 0x00, 0xF7] => Some(Mode::Studio),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enter_gig_sysex_parsed() {
+        assert_eq!(
+            parse_gig_sysex(&[0xF0, 0x7D, 0x01, 0x01, 0xF7]),
+            Some(Mode::Gig)
+        );
+    }
+
+    #[test]
+    fn exit_gig_sysex_parsed() {
+        assert_eq!(
+            parse_gig_sysex(&[0xF0, 0x7D, 0x01, 0x00, 0xF7]),
+            Some(Mode::Studio)
+        );
+    }
+
+    #[test]
+    fn unrelated_sysex_returns_none() {
+        assert_eq!(parse_gig_sysex(&[0xF0, 0x7E, 0x01, 0x01, 0xF7]), None);
+    }
+
+    #[test]
+    fn pe_sysex_returns_none() {
+        // MIDI-CI PE SysEx should not be mistaken for gig commands
+        assert_eq!(parse_gig_sysex(&[0xF0, 0x7E, 0x7F, 0x0D, 0x20, 0xF7]), None);
+    }
+
+    #[test]
+    fn truncated_sysex_returns_none() {
+        assert_eq!(parse_gig_sysex(&[0xF0, 0x7D, 0x01]), None);
+        assert_eq!(parse_gig_sysex(&[]), None);
+    }
+
+    #[test]
+    fn extra_bytes_returns_none() {
+        assert_eq!(parse_gig_sysex(&[0xF0, 0x7D, 0x01, 0x01, 0x00, 0xF7]), None);
+    }
+
+    #[test]
+    fn wrong_command_byte_returns_none() {
+        assert_eq!(parse_gig_sysex(&[0xF0, 0x7D, 0x01, 0x02, 0xF7]), None);
+    }
+}
 /// Handler for /mode endpoint.
 /// GET:             returns current mode ("studio" or "gig").
 /// POST ?set=studio: restore pedalboard-dev.target if coming from gig, reconnect mod-host.
