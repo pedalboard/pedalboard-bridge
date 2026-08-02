@@ -214,8 +214,9 @@ async fn main() {
                                             ))
                                             .await;
                                             // Remove nologin files left by systemctl isolate.
-                                            let _ = std::fs::remove_file("/run/nologin");
-                                            let _ = std::fs::remove_file("/etc/nologin");
+                                            let _ = std::process::Command::new("sudo")
+                                                .args(["rm", "-f", "/run/nologin", "/etc/nologin"])
+                                                .status();
                                             let addr = state.modhost_addr.clone();
                                             if let Ok(client) =
                                                 crate::modhost::ModHostClient::connect(&addr).await
