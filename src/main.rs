@@ -178,7 +178,59 @@ async fn main() {
                 } else if b == 0xF7 && !sysex_buf.is_empty() {
                     sysex_buf.push(b);
                     info!("MIDI IN:  {}", hex_encode(&sysex_buf));
-                    let _ = sysex_tx_midi.send(sysex_buf.clone());
+
+                    // Gig mode SysEx from controller:
+                    //   F0 7D 01 01 F7 → switch to gig
+                    //   F0 7D 01 00 F7 → switch to studio
+                    if sysex_buf == [0xF0, 0x7D, 0x01, 0x01, 0xF7] {
+                        let bridge = bridge_for_midi.clone();
+                        tokio::spawn(async move {
+                            let mut state = bridge.lock().await;
+                            if state.mode != mode::Mode::Gig {
+                                let result = std::process::Command::new("sudo")
+                                    .args(["systemctl", "isolate", "pedalboard-gig.target"])
+                                    .status();
+                                match result {
+                                    Ok(s) if s.success() => {
+                                        state.mode = mode::Mode::Gig;
+                                        info!("Mode: gig (triggered by controller SysEx)");
+                                    }
+                                    Ok(s) => warn!("systemctl isolate gig failed: {}", s),
+                                    Err(e) => warn!("systemctl isolate gig error: {e}"),
+                                }
+                            }
+                        });
+                    } else if sysex_buf == [0xF0, 0x7D, 0x01, 0x00, 0xF7] {
+                        let bridge = bridge_for_midi.clone();
+                        tokio::spawn(async move {
+                            let mut state = bridge.lock().await;
+                            if state.mode == mode::Mode::Gig {
+                                let result = std::process::Command::new("sudo")
+                                    .args(["systemctl", "isolate", "pedalboard-dev.target"])
+                                    .status();
+                                match result {
+                                    Ok(s) if s.success() => {
+                                        tokio::time::sleep(std::time::Duration::from_millis(1000))
+                                            .await;
+                                        // Reconnect mod-host after restoring dev target.
+                                        let addr = state.modhost_addr.clone();
+                                        if let Ok(client) =
+                                            crate::modhost::ModHostClient::connect(&addr).await
+                                        {
+                                            state.modhost = client;
+                                        }
+                                        state.mode = mode::Mode::Studio;
+                                        info!("Mode: studio (triggered by controller SysEx)");
+                                    }
+                                    Ok(s) => warn!("systemctl isolate dev failed: {}", s),
+                                    Err(e) => warn!("systemctl isolate dev error: {e}"),
+                                }
+                            }
+                        });
+                    } else {
+                        let _ = sysex_tx_midi.send(sysex_buf.clone());
+                    }
+
                     sysex_buf.clear();
                 } else if !sysex_buf.is_empty() {
                     sysex_buf.push(b);
