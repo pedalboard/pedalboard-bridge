@@ -110,6 +110,7 @@ async fn main() {
         modhost,
         audio_engine,
         design_mode: false,
+        gig_mode: false,
         modhost_addr: args.modhost.clone(),
         midi_tx: None,
         sysex_tx: None,
@@ -327,7 +328,7 @@ async fn handle_status(
 
     axum::Json(serde_json::json!({
         "version": format!("{}-{}", env!("CARGO_PKG_VERSION"), env!("GIT_HASH")),
-        "mode": if bridge.design_mode { "design" } else { "live" },
+        "mode": if bridge.gig_mode { "gig" } else if bridge.design_mode { "design" } else { "live" },
         "midi": {
             "connected": midi_info.input_port.is_some() || midi_info.output_port.is_some(),
             "input": midi_info.input_port,
