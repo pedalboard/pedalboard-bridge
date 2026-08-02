@@ -20,7 +20,10 @@ jobs:
     runs-on: ubuntu-24.04-arm
     container:
       image: debian:bookworm
-      options: -e HOME=/root
+      env:
+        HOME: /root
+        RUSTUP_HOME: /root/.rustup
+        CARGO_HOME: /root/.cargo
     steps:
       - uses: actions/checkout@v4
         with:
