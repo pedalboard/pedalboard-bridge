@@ -204,6 +204,10 @@ async fn main() {
                                     }
                                 }
                                 mode::Mode::Studio => {
+                                    // Remove nologin first — before isolate, unconditionally.
+                                    let _ = std::process::Command::new("sudo")
+                                        .args(["rm", "-f", "/etc/nologin", "/run/nologin"])
+                                        .status();
                                     let result = std::process::Command::new("sudo")
                                         .args(["systemctl", "isolate", "pedalboard-dev.target"])
                                         .status();
@@ -213,10 +217,6 @@ async fn main() {
                                                 1000,
                                             ))
                                             .await;
-                                            // Remove nologin files left by systemctl isolate.
-                                            let _ = std::process::Command::new("sudo")
-                                                .args(["rm", "-f", "/run/nologin", "/etc/nologin"])
-                                                .status();
                                             let addr = state.modhost_addr.clone();
                                             if let Ok(client) =
                                                 crate::modhost::ModHostClient::connect(&addr).await

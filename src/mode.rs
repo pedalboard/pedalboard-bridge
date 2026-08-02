@@ -141,6 +141,13 @@ pub async fn handle_mode(
     match requested.as_str() {
         "studio" => {
             if bridge.mode == Mode::Gig {
+                // Always remove nologin first — regardless of whether isolate succeeds.
+                // systemctl isolate writes /etc/nologin (owned by root) during the
+                // transition and does not remove it on failure.
+                let _ = Command::new("sudo")
+                    .args(["rm", "-f", "/etc/nologin", "/run/nologin"])
+                    .status();
+
                 // Restore dev target (re-enables SSH, WiFi, avahi, MOD UI, etc.).
                 let result = Command::new("sudo")
                     .args(["systemctl", "isolate", "pedalboard-dev.target"])
@@ -161,12 +168,6 @@ pub async fn handle_mode(
                     }
                 }
                 tokio::time::sleep(Duration::from_millis(1000)).await;
-                // Remove nologin files systemd creates during isolate.
-                // May be /run/nologin or /etc/nologin depending on systemd version.
-                // Must use sudo since the file is owned by root.
-                let _ = Command::new("sudo")
-                    .args(["rm", "-f", "/run/nologin", "/etc/nologin"])
-                    .status();
             }
             // Reconnect bridge to mod-host.
             let addr = bridge.modhost_addr.clone();
